@@ -1,0 +1,2762 @@
+{# dri_kiln_thermal_analytics/templates/interactive-dashboard.html #}
+{% if fragment %}
+{% endif %}
+
+<h2 hidden>Interactive Dashboard</h2>
+
+<section class="page-section">
+<script>
+if (!window.crypto) window.crypto = {};
+if (!window.crypto.randomUUID) { window.crypto.randomUUID = function() { return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) { var r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8); return v.toString(16); }); }; }
+</script>
+
+<script src="{{ url_for('dri_kiln_thermal_analytics.static', filename='js/vendor/plotly-2.32.0.min.js') }}"></script>
+<script>
+    // Silence harmless 3D rotation warnings from Plotly's engine
+    if (typeof Plotly !== 'undefined') {
+        Plotly.setPlotConfig({ logging: false });
+    }
+</script>
+
+<style>
+/* --- BASE STYLES --- */
+:root {
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --color-background-primary: #ffffff;
+    --color-background-secondary: #f8fafc;
+    --color-background-tertiary: #f1f5f9;
+    --color-text-primary: #0f172a;
+    --color-text-secondary: #475569;
+    --color-text-tertiary: #94a3b8;
+    --color-border-tertiary: #e2e8f0;
+    --border-radius-lg: 8px;
+}
+
+
+/* --- GLOBAL RESETS (Fixes the white space in the parent app) --- */
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; width: 100%; overflow-x: hidden; }
+
+/* --- LAYOUT STRUCTURE --- */
+.scada-wrapper { 
+    font-family: var(--font-sans); 
+    background: var(--color-background-tertiary); 
+    color: var(--color-text-primary); 
+    font-size: 13px; 
+    height: calc(100vh - 65px); 
+    width: 100%; /* Forces your dashboard to stretch fully to the edges */
+    display: flex; 
+    flex-direction: column; 
+    overflow: hidden; 
+    margin: 0; 
+}
+
+.scada-grid { display: grid; grid-template-columns: 230px minmax(0,1fr) 260px; gap: 10px; padding: 2px 10px 10px 10px; flex: 1; min-height: 0; }
+.stack-left, .stack-center, .stack-right { display:flex; flex-direction:column; gap:10px; min-height: 0; }
+
+/* --- COMPONENT STYLES (Cinematic & Deep Shadows) --- */
+.scada-card { 
+    background: var(--color-background-primary); 
+    border: 1px solid #e2e8f0; 
+    border-radius: 12px; 
+    overflow: hidden; 
+    display: flex; 
+    flex-direction: column; 
+    box-shadow: 0 4px 15px rgba(0,0,0,0.04), 0 1px 3px rgba(0,0,0,0.02); 
+    transition: box-shadow 0.3s ease;
+}
+.scada-card:hover { box-shadow: 0 8px 25px rgba(0,0,0,0.06); }
+.scada-header { 
+    display: flex; align-items: center; justify-content: space-between; 
+    padding: 14px 16px 10px; flex: 0 0 auto; 
+    background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+    border-bottom: 1px solid var(--color-border-tertiary); 
+}
+.scada-header > span { font-size: 11px; font-weight: 800; color: #1e293b; text-transform: uppercase; letter-spacing: 0.08em; }
+
+/* --- CLEAN TEXT TABS --- */
+.clean-tabs { display:flex; gap:16px; align-items:center; }
+.clean-tab { background: transparent; border: none; color: #64748b; font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.2s; padding: 0; font-family: inherit;}
+.clean-tab:hover { color: #0f172a; text-shadow: 0 0 8px rgba(0,0,0,0.1); }
+.clean-tab.active { color: #0f172a; font-weight: 800; border-bottom: 2px solid #0f172a; padding-bottom: 2px;}
+
+/* --- AI BUTTON (Industrial Navy) --- */
+.ai-btn-pill { 
+    background: #0f172a; 
+    border: 1px solid #334155; color: #f8fafc; border-radius: 4px; 
+    padding: 6px 16px; font-weight: 600; font-size: 12px; 
+    cursor: pointer; transition: all 0.2s; 
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); margin-left: 8px;
+}
+.ai-btn-pill:hover { 
+    background: #1e293b; 
+    border-color: #475569; transform: translateY(-1px);
+}
+
+/* --- KILN STATUS BADGE --- */
+.status-badge {
+    padding: 4px 12px; border-radius: 4px; font-size: 11px; font-weight: 800; 
+    text-transform: uppercase; letter-spacing: 0.5px; border: 1px solid transparent;
+}
+.status-healthy { background: #ecfdf5; color: #059669; border-color: #a7f3d0; }
+.status-warning { background: #fffbeb; color: #d97706; border-color: #fde68a; }
+.status-high { background: #fff7ed; color: #ea580c; border-color: #ffedd5; }
+.status-critical { background: #fef2f2; color: #dc2626; border-color: #fecaca; }
+
+/* --- TOPBAR (Sleek Dark Mode) --- */
+/* --- TOPBAR (Sleek Dark Mode) --- */
+.scada-topbar {
+    display: flex; align-items: center; justify-content: space-between; 
+    padding: 0 20px !important; /* Fixed padding to push elements to the corners */
+    height: 42px !important; width: 100%; 
+    background: #0f172a !important;
+    border-bottom: 1px solid #1e293b; flex-shrink: 0; box-sizing: border-box;
+}
+.brand { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; color: #f8fafc !important; }
+.top-right { display: flex; align-items: center; gap: 14px; font-size: 12px; color: #94a3b8; }
+.brand-mark{width:8px;height:8px;border-radius:2px;background:#E24B4A;}
+.live-pill{display:flex;align-items:center;gap:5px;padding:3px 10px;background:#EAF3DE;border-radius:20px;color:#27500A;font-size:11px;font-weight:500;}
+.live-dot{width:5px;height:5px;border-radius:50%;background:#27500A;animation:blink 1.6s infinite;}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+.alert-bar { display:flex; align-items:center; gap:8px; padding:0 20px; height:36px; background:#FCEBEB; border-bottom:1px solid #F09595; flex-shrink: 0; cursor:pointer;}
+.alert-count { padding:2px 8px; background:#E24B4A; color:#fff; border-radius:10px; font-size:11px; font-weight:500 }
+.alert-msg { font-size:12px; font-weight:500; color:#791F1F }
+.achip { padding:2px 7px; background:#fff; border:1px solid #F09595; border-radius:4px; font-size:11px; color:#791F1F; white-space:nowrap; }
+.achip b { color:#E24B4A; font-weight:500; }
+
+/* --- KILN MAP --- */
+.kiln-bg { background: #ffffff; border-radius: 0 0 8px 8px; overflow: hidden; flex: 1; position: relative; display: flex; flex-direction: column;}
+.viewport-fill { width: 100%; height: 100%; background: #ffffff; flex: 1; min-height: 0;}
+
+/* --- LEFT COLUMN --- */
+.gauge-wrap { display:flex; flex-direction:column; align-items:center; padding:0px 10px 10px; gap:0px }
+.kpi-grid { display:grid; grid-template-columns:1fr 1fr; gap:1px; background:var(--color-border-tertiary); margin:0; }
+.kpi-box { background:var(--color-background-primary); padding:10px 14px; text-align: left; }
+.kpi-label { font-size:10px; font-weight:600; color:var(--color-text-tertiary); text-transform:uppercase; letter-spacing:.05em; margin-bottom:2px }
+.kpi-val { font-size:15px; font-weight:700; color:#0f172a; margin-top:0; }
+.diag-container { flex: 1; background: #fff; overflow-y: auto; }
+.anom-row{display:flex;justify-content:space-between;align-items:flex-start;padding:10px 14px;border-bottom:1px solid var(--color-border-tertiary);cursor:pointer}
+.anom-row:hover{background:var(--color-background-secondary)}
+.sev{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:5px;position:relative;top:-1px}
+.s-r{background:#E24B4A} .s-a{background:#BA7517} .s-g{background:#639922}
+.anom-id{font-size:12px;font-weight:600; color:var(--color-text-primary);}
+.anom-sub{font-size:10px;color:var(--color-text-tertiary);margin-top:2px}
+.anom-temp{font-size:13px;font-weight:600;}
+
+.hotspot-card{
+    border-left:4px solid #ef4444;
+    padding:12px;
+    border-bottom:1px solid #e2e8f0;
+    background:white;
+}
+
+.hotspot-card:hover{
+    background:#f8fafc;
+}
+
+.hotspot-top{
+    display:flex;
+    justify-content:space-between;
+}
+
+.hotspot-id{
+    font-weight:700;
+    font-size:15px;
+}
+
+.hotspot-zone{
+    font-size:11px;
+    color:#64748b;
+}
+
+.hotspot-temp{
+    font-size:28px;
+    font-weight:800;
+    color:#ea580c;
+}
+
+.hotspot-meta{
+    display:flex;
+    justify-content:space-between;
+    margin-top:8px;
+}
+
+.severity-pill{
+    background:#fff7ed;
+    color:#ea580c;
+    border:1px solid #fdba74;
+    padding:2px 8px;
+    border-radius:999px;
+    font-size:10px;
+    font-weight:700;
+}
+
+.hotspot-footer{
+    margin-top:8px;
+    font-size:11px;
+    color:#94a3b8;
+}
+
+#risk-grid-container { display: flex; flex-direction: column; overflow-y: auto; flex: 1; background: #fff;}
+.risk-card{
+    background:white;
+    padding:12px;
+    border-bottom:1px solid #e2e8f0;
+}
+
+.risk-card:hover{
+    background:#f8fafc;
+}
+
+.risk-header{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+}
+
+.risk-loc{
+    font-size:22px;
+    font-weight:800;
+    color:#0f172a;
+}
+
+.risk-score{
+    font-size:11px;
+    color:#64748b;
+}
+
+.risk-badge{
+    background:#dcfce7;
+    color:#16a34a;
+    border-radius:999px;
+    padding:2px 10px;
+    font-size:11px;
+    font-weight:700;
+}
+
+.risk-body{
+    display:grid;
+    gap:8px;
+    margin-top:10px;
+}
+
+.risk-label{
+    font-size:9px;
+    letter-spacing:.08em;
+    color:#94a3b8;
+    font-weight:700;
+}
+
+.risk-trend{
+    margin-top:10px;
+    color:#16a34a;
+    font-size:12px;
+    font-weight:600;
+}
+
+/* --- FORMS, BUTTONS & TABS --- */
+#trendline-viewport { flex: 1; min-height: 200px; position: relative; padding: 0 10px 10px 10px; }
+.trend-plot { width: 100%; height: 100%; }
+.placeholder-text { display: flex; height: 100%; align-items: center; justify-content: center; color: #9ca3af; font-size: 0.85rem; }
+.scada-btn { background: #fff; border: 1px solid #cbd5e1; padding: 6px 12px; border-radius: 4px; font-size: 11px; font-weight: 600; cursor: pointer; color: #334155; width: 100%; text-transform: none; display:flex; align-items:center; justify-content:center;}
+.scada-btn:hover { background: #f8fafc; color: #0f172a; border-color: #94a3b8; }
+.scada-input { border: 1px solid #cbd5e1; padding: 4px 8px; border-radius: 4px; font-size: 11px; width: 100%; font-family: inherit; }
+.trend-tabs { display:flex; gap:2px; background:var(--color-background-secondary); border-radius:6px; padding:2px; border: 1px solid var(--color-border-tertiary); }
+.trend-mini { padding:4px 10px; border-radius:4px; font-size:10px; font-weight:600; cursor:pointer; color:var(--color-text-secondary); user-select:none; border: none; background: transparent; transition: all 0.2s;}
+.trend-mini.active { background:var(--color-background-primary); color:var(--color-text-primary); box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+
+/* --- 3D MAP OVERLAY CONTROLS --- */
+.map-controls-overlay {
+    position:absolute; bottom:10px; right:10px; display:flex; gap:6px; z-index:10; 
+    background:rgba(255,255,255,0.9); padding:4px 8px; border-radius:6px; 
+    box-shadow:0 1px 4px rgba(0,0,0,0.15); border: 1px solid var(--color-border-tertiary);
+}
+.map-controls-overlay .ctrl-btn {
+    background: var(--color-background-primary); border: 1px solid var(--color-border-tertiary);
+    color: var(--color-text-secondary); padding: 4px 8px; border-radius: 4px; font-size: 10px;
+    font-weight: 700; cursor: pointer; transition: all 0.2s;
+}
+.map-controls-overlay .ctrl-btn:hover { background: var(--color-background-secondary); color: var(--color-text-primary); }
+
+/* --- DARK MODE OVERRIDES FOR HEADERS --- */
+@media (prefers-color-scheme: dark) {
+    .scada-topbar { background-color: #0f172a !important; border-bottom: 1px solid #1e293b !important; }
+    .brand { color: #f8fafc !important; }
+    .alert-bar { background: #450a0a !important; border-bottom: 1px solid #7f1d1d !important; }
+    .alert-msg { color: #fca5a5 !important; }
+    .achip { background: #1e293b !important; color: #fca5a5 !important; border: 1px solid #7f1d1d !important; }
+    #lbl-timestamp { color: #a5b4fc !important; }
+    .live-pill { background: #064e3b !important; color: #34d399 !important; }
+    .live-dot { background: #34d399 !important; }
+}
+</style>
+
+<div class="scada-wrapper" id="main-wrapper">
+    <div class="scada-topbar">
+      <div class="brand" style="font-size: 14px; font-weight: 700; letter-spacing: 0.5px;">
+        <img src="{{ url_for('dri_kiln_thermal_analytics.static', filename='img/jindal_logo.png') }}" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" style="height: 22px; margin-right: 8px; object-fit: contain;">
+        <div style="display:none; align-items:center; justify-content:center; width:22px; height:22px; background:#E24B4A; color:white; font-weight:bold; border-radius:3px; font-size:11px; margin-right:8px; letter-spacing:0.5px;">JS</div>
+        DRI Kiln Thermal Analytics
+      </div>
+      <div class="top-right">
+        <div id="kiln-global-status" class="status-badge status-healthy">🟢 HEALTHY</div>
+        <div style="height: 14px; width: 1px; background: #334155; margin: 0 4px;"></div>
+        <div class="live-pill"><div class="live-dot"></div>Live</div>
+        <span id="lbl-timestamp" style="color: #94a3b8; font-weight: 500;">LATEST: Awaiting Data...</span>
+      </div>
+    </div>
+
+    <!-- ALERT BAR -->
+    <div class="alert-bar" id="btn-hotspot-alert" style="display:none;" onclick="document.getElementById('hotspot-dropdown').toggleAttribute('hidden')">
+      <div style="width:14px;height:14px;border-radius:50%;background:#E24B4A;display:flex;align-items:center;justify-content:center;flex-shrink:0"><div style="width:5px;height:5px;border-radius:50%;background:#fff"></div></div>
+      <span class="alert-msg">Critical hotspots detected</span>
+      <span class="alert-count" id="hotspot-count">0</span>
+      <div id="alert-chips" style="display:flex; gap:5px; overflow:hidden; margin-left:2px;"></div>
+      
+      <!-- Dropdown for overflowing hotspots -->
+      <div id="hotspot-dropdown" hidden style="position:absolute; top:86px; left:20px; right:20px; background:white; border:1px solid #E24B4A; border-radius: 0 0 6px 6px; z-index:100; box-shadow:0 4px 12px rgba(0,0,0,0.15);">
+          <ul id="hotspot-list" style="list-style:none; max-height:200px; overflow-y:auto; margin:0; padding:0;"></ul>
+      </div>
+    </div>
+
+    <div class="scada-grid">
+        <!-- COLUMN 1: GLOBAL HEALTH & ANOMALIES -->
+        <div class="stack-left">
+            <!-- Allowed AI Diagnostics to stretch (flex:1) to fill the empty space -->
+            <div class="scada-card" style="flex: 1; min-height: 160px; display: flex; flex-direction: column;">
+                <div class="scada-header" style="border-bottom: 1px solid var(--color-border-tertiary); flex-shrink: 0;"><span>AI Diagnostics</span></div>
+                <div id="patch-info" style="padding: 14px; overflow-y: auto;">
+                    <div class="placeholder-text" style="text-align: center; padding-top: 40px;">Click a patch on the 3D map to view AI diagnostics.</div>
+                </div>
+            </div>
+
+            <div class="scada-card" style="flex: 0 0 auto; position: relative;">
+                <div class="scada-header" style="padding-bottom: 8px;">
+                    <span>Plant Health</span>
+                    <span style="font-size: 9px; font-weight: 500; color: #94a3b8; text-transform: none;">*Alerts grouped by region</span>
+                </div>
+                <div class="kpi-grid">
+                    <div class="kpi-box" title="Total number of individual grid patches exceeding safety thresholds"><div class="kpi-label">Critical Patches</div><div class="kpi-val" id="val-crit-patches" style="color:#E24B4A">--</div></div>
+                    <div class="kpi-box" title="Weighted score factoring max temps and hotspot density"><div class="kpi-label">Health Index</div><div class="kpi-val" id="val-healthy-pct" style="color:#10b981">100</div><div style="font-size: 9px; font-weight: 700; color: #10b981; margin-top: 4px;" id="val-healthy-trend">Optimal</div></div>
+                    <div class="kpi-box" title="Consolidated alert regions generating notifications"><div class="kpi-label">Hotspot Regions</div><div class="kpi-val" id="val-hs-regions">--</div></div>
+                    <div class="kpi-box" title="Kiln zone currently experiencing the highest thermal stress"><div class="kpi-label">Max Risk Zone</div><div class="kpi-val" id="val-risk-zone" style="color:#f59e0b; font-size: 13px;">--</div></div>
+                </div>
+            </div>
+            
+            <div class="scada-card" style="flex: 1; display: flex; flex-direction: column;">
+                <div class="scada-header" style="border-bottom: 1px solid var(--color-border-tertiary);">
+                    <span>TREND CONTROLS <span style="color:#94a3b8; font-size:10px; cursor:pointer; margin-left:4px;">ⓘ</span></span>
+                </div>
+                <div style="padding: 14px; display: flex; flex-direction: column; gap: 14px; overflow-y: auto; flex: 1;">
+                    <div>
+                        <label style="font-size: 9px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px;">Date Range</label>
+                        <div style="display: flex; gap: 6px; margin-top: 4px;">
+                            <input type="date" id="inp-date-start-left" class="scada-input" style="color: #0f172a; font-weight: 600;">
+                            <input type="date" id="inp-date-end-left" class="scada-input" style="color: #0f172a; font-weight: 600;">
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <label style="font-size: 9px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px;">Analyze Zone (0-70m)</label>
+                        <div style="display: flex; gap: 6px; margin-top: 4px; align-items: center;">
+                            <input type="number" id="inp-zone-start-left" class="scada-input" placeholder="Start" min="0" max="70" step="0.1">
+                            <span style="color: #cbd5e1">-</span>
+                            <input type="number" id="inp-zone-end-left" class="scada-input" placeholder="End" min="0" max="70" step="0.1">
+                            <button class="scada-btn" id="btn-apply-zone-left" style="width: auto; padding: 4px 12px; border-color: #e2e8f0; font-weight: 700;">View</button>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label style="font-size: 9px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px;">Analyze Specific Point</label>
+                        <div style="display: flex; gap: 6px; margin-top: 4px; align-items: center;">
+                            <input type="number" id="inp-point-len-left" class="scada-input" placeholder="Length" min="0" max="70" step="0.1">
+                            <input type="number" id="inp-point-ang-left" class="scada-input" placeholder="Angle" min="0" max="360" step="0.1">
+                            <button class="scada-btn" id="btn-apply-point-left" style="width: auto; padding: 4px 12px; color: #1d4ed8; border-color: #bfdbfe; background: #eff6ff; font-weight: 700;">View</button>
+                        </div>
+                    </div>
+
+                    <div style="margin-top: auto; padding-top: 10px;">
+                        <button class="ai-btn-pill" id="btn-run-prediction-left" style="width: 100%; margin: 0; padding: 10px; text-align: center; font-size: 13px;">✨ AI Predict (10 Days)</button>
+                        <button class="scada-btn" id="btn-reset-trend-left" style="width: 100%; margin-top: 8px; font-weight: 600; display: none;">Reset to Global View</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- COLUMN 2: VISUALIZATION & TREND -->
+        <div class="stack-center" style="flex: 1.2;">
+            <div class="scada-card" style="flex: 1;">
+                <div class="scada-header" style="padding-bottom: 12px;">
+                    <span style="font-size: 12px; font-weight: 600;">Live 3D Thermal Map</span>
+                    
+                    <!-- NEW UI TOGGLE -->
+                    <div class="clean-tabs" id="map-mode-controls" style="margin-left: 20px; border-left: 1px solid var(--color-border-tertiary); padding-left: 20px;">
+                        <button class="clean-tab active" data-mode="normal">Normal</button>
+                        <button class="clean-tab" style="color: #E24B4A; font-weight: 600;" data-mode="anomaly">Anomaly</button>
+                    </div>
+
+                    <div class="clean-tabs" id="kiln-metric-controls" style="margin-left: auto;">
+                        <button class="clean-tab active" data-kmetric="max">Max</button>
+                        <button class="clean-tab" data-kmetric="avg">Mean</button>
+                        <button class="clean-tab" data-kmetric="std">Std</button>
+                        <button class="clean-tab" data-kmetric="grad">Grad</button>
+                        <span style="font-size: 12px; color: #64748b; margin-left: 12px;" id="lbl-timestamp-clean">--:--:--</span>
+                    </div>
+                </div>
+                <div class="kiln-bg">
+                    <div id="kiln-3d-viewport" class="viewport-fill"></div>
+                    
+                    <div style="position:absolute; top:10px; left:10px; background:rgba(255,255,255,0.9); padding:8px; border-radius:6px; box-shadow:0 1px 4px rgba(0,0,0,0.1); border: 1px solid var(--color-border-tertiary); z-index:10; font-size:9px; font-weight:600; color:#334155; display:flex; flex-direction:column; gap:4px;">
+                        <div style="display:flex; align-items:center; gap:6px;"><div style="width:10px; height:10px; border-radius:2px; background:#00d4ff;"></div> &lt;225°C (Cool)</div>
+                        <div style="display:flex; align-items:center; gap:6px;"><div style="width:10px; height:10px; border-radius:2px; background:#10b981;"></div> 225-275°C (Normal)</div>
+                        <div style="display:flex; align-items:center; gap:6px;"><div style="width:10px; height:10px; border-radius:2px; background:#f59e0b;"></div> 275-325°C (Warning)</div>
+                        <div style="display:flex; align-items:center; gap:6px;"><div style="width:10px; height:10px; border-radius:2px; background:#f97316;"></div> 325-400°C (High)</div>
+                        <div style="display:flex; align-items:center; gap:6px;"><div style="width:10px; height:10px; border-radius:2px; background:#ef4444;"></div> &gt;400°C (Critical)</div>
+                    </div>
+
+                    <div class="map-controls-overlay">
+                        <button class="ctrl-btn" id="btn-play">▶</button>
+                        <button class="ctrl-btn" id="btn-pause" style="background:var(--color-background-secondary);">⏸</button>
+                        <div style="display:flex; align-items:center; gap:4px; border-left:1px solid var(--color-border-tertiary); padding-left:8px; margin-left:2px;">
+                            <span style="font-size:9px; font-weight:700; color:var(--color-text-secondary);">ZOOM</span>
+                            <input type="range" id="inp-zoom" min="1" max="10" value="5" style="width:60px; accent-color: #534AB7;">
+                        </div>
+                        <div style="display:flex; align-items:center; gap:4px; border-left:1px solid var(--color-border-tertiary); padding-left:8px;">
+                            <span style="font-size:9px; font-weight:700; color:var(--color-text-secondary);">SPEED</span>
+                            <input type="range" id="inp-speed" min="1" max="10" value="3" style="width:60px; accent-color: #534AB7;">
+                        </div>
+                        <div style="display:flex; align-items:center; gap:4px; border-left:1px solid var(--color-border-tertiary); padding-left:8px;">
+                            <input type="checkbox" id="chk-grid" style="margin:0; accent-color: #534AB7;">
+                            <label for="chk-grid" style="font-size:9px; font-weight:700; color:var(--color-text-secondary); cursor:pointer;">GRID</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="scada-card" style="flex: 1; min-height: 250px; display: flex; flex-direction: column;">
+                <div class="scada-header" style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--color-border-tertiary); padding: 10px 14px; overflow-x:auto;">
+                    <!-- Left Side: Title -->
+                    <div style="display:flex; align-items:center; gap:12px; white-space:nowrap; flex-shrink:0;">
+                        <span id="trendline-title" class="ct" style="font-weight: 700; font-size: 11px;">PATCH TREND — OVERALL</span>
+                    </div>
+                    
+                    <!-- Right Side: Tabs -->
+                    <div style="display:flex; align-items:center; gap:12px; white-space:nowrap; flex-shrink:0;">
+                        <div id="trend-res-tabs" class="clean-tabs" style="gap:6px;">
+                            <button class="clean-tab" data-res="day">Day</button>
+                            <button class="clean-tab active" data-res="hour">Hour</button>
+                            <button class="clean-tab" data-res="minute">Min</button>
+                        </div>
+                        
+                        <div id="trend-metric-mirror" class="clean-tabs" style="gap:6px; padding-left:10px; border-left:1px solid var(--color-border-tertiary);">
+                            <button class="clean-tab active" data-metric="max">Max</button>
+                            <button class="clean-tab" data-metric="avg">Mean</button>
+                            <button class="clean-tab" data-metric="std">Std</button>
+                            <button class="clean-tab" data-metric="grad">Grad</button>
+                        </div>
+                        <!-- Dates and AI Predict moved exclusively to Left Control Panel -->
+                    </div>
+                </div>
+
+                <div style="position:relative; flex:1; display:flex; flex-direction:column;">
+                    <div style="padding: 10px 14px 0; display:flex; gap:14px; font-size:11px; color:var(--color-text-secondary); z-index:2;">
+                        <span><span style="display:inline-block; width:10px; height:3px; background:#E24B4A; border-radius:2px; margin-right:5px; vertical-align:middle;"></span>Max temp</span>
+                        <span><span style="display:inline-block; width:14px; height:0; border-top:2px dashed #BA7517; margin-right:5px; vertical-align:middle;"></span>Daily change</span>
+                    </div>
+                    
+                    <div id="trendline-viewport" style="flex: 1; position:relative; min-height:180px; padding: 6px 14px 14px;">
+                        <div id="trendline-plot" class="trend-plot"></div>
+                        <div id="trendline-placeholder" class="placeholder-text" style="position: absolute; top:0; left:0; right:0; bottom:0; background: #fff; z-index: 5;">Sync history to view trend...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- COLUMN 3: RIGHT -->
+        <div class="stack-right">
+           <div class="scada-card" style="flex: 1.2;">
+              <div class="scada-header" style="border-bottom: 1px solid var(--color-border-tertiary); padding-bottom: 12px;">
+                 <span class="ct" style="font-size: 11px;">Active Hotspots</span>
+                 <span style="font-size:10px; background:#FCEBEB; color:#791F1F; padding:2px 10px; border-radius:12px; border:1px solid #F09595; text-transform:none;"><span id="hotspot-count-right">0</span> critical</span>
+              </div>
+              <div id="hotspot-list-container" class="diag-container" style="flex:1; overflow-y:auto; padding-right:4px;">
+                  <div class="placeholder-text">No critical hotspots</div>
+              </div>
+           </div>
+
+           <div class="scada-card" style="flex: 1;">
+                <div class="scada-header" style="border-bottom: 1px solid var(--color-border-tertiary); padding-bottom: 12px;">
+                    <span class="ct" style="font-size: 11px;">90-Day Risk Zones</span>
+                    <div class="risk-tabs" style="display:flex; gap:4px;">
+                        <button class="active" id="btn-risk-accretion" style="padding:2px 6px; font-size:10px; border:1px solid #EF9F27; background:#FAEEDA; color:#633806; border-radius:4px; cursor:pointer;">Accretion</button>
+                        <button id="btn-risk-insulation" style="padding:2px 6px; font-size:10px; border:1px solid #85B7EB; background:#E6F1FB; color:#0C447C; border-radius:4px; cursor:pointer;">Insulation</button>
+                    </div>
+                </div>
+                <div id="risk-grid-container" class="diag-container" style="flex:1; overflow-y:auto; padding-right:4px;">
+                    <div class="placeholder-text">Syncing risk zones...</div>
+                </div>
+           </div>
+
+           <!-- NEW LOCATION: Anomaly Detection (Hidden by Default) -->
+           <div class="scada-card" id="card-anomaly-detection" style="display: none; flex: 1;">
+               <div class="scada-header"><span>Anomaly Detection</span></div>
+               <div id="anomaly-container" class="diag-container" style="overflow-y:auto; padding-right:4px;">
+                   <div class="placeholder-text">Scanning patches...</div>
+               </div>
+           </div>
+
+           <div style="padding:0 0 2px;">
+               <button class="scada-btn" id="btn-export-excel" style="background:#0f172a; border:0.5px solid var(--color-border-tertiary); border-radius:4px; font-size:12px; font-weight:600; color:#f8fafc; padding:10px; display:flex; flex-direction:column; align-items:center; line-height:1.4;">
+                   <span>Export Executive Report ↗</span>
+                   <span style="font-size: 9px; font-weight: 400; color: #94a3b8;">Includes Top 20 Hotspots & Trends</span>
+               </button>
+           </div>
+        </div>
+    </div>
+</div>
+
+<script>
+if (!window.crypto) window.crypto = {};
+if (!window.crypto.randomUUID) { window.crypto.randomUUID = function() { return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) { var r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8); return v.toString(16); }); }; }
+
+(function () {
+    function renderAnomalies(anomalies) {
+        const container = document.getElementById("anomaly-container");
+        if (!container) return;
+        if (!anomalies || anomalies.length === 0) {
+            container.innerHTML = `<div class="placeholder-text">No anomalies detected</div>`;
+            return;
+        }
+        container.innerHTML = anomalies.slice(0, 10).map(a => `
+            <div class="anom-row" onclick="window.focusPatch(${a.pid})">
+                <div>
+                   <div class="anom-id"><span class="sev ${a.max > 300 ? 's-r' : a.max > 250 ? 's-a' : 's-g'}"></span>Patch ${a.pid}</div>
+                   <div class="anom-sub">Max ${a.max.toFixed(0)}°C · Grad ${a.grad.toFixed(2)}</div>
+                </div>
+                <div class="anom-temp" style="color:${a.max > 300 ? '#E24B4A' : a.max > 250 ? '#BA7517' : '#639922'};">${a.max.toFixed(0)}°</div>
+            </div>`).join("");
+   }
+  const NS = "__DRI_KILN_THERMAL_ANALYTICS_DASH__";
+  const UIREV = "dri-kiln-thermal-analytics-uirev-7";
+
+  if (window[NS] && typeof window[NS].destroy === "function") {
+    try { window[NS].destroy(); } catch (e) {}
+  }
+
+  const state = {
+    destroyed: false,
+    pollIntervalId: null,
+    rafId: null,
+    onResize: null,
+
+    selectedPID: null,     
+    selectedLength: null,  
+    selectedAngle: null,
+    zoneStart: null,  
+    zoneEnd: null,    
+
+    latestPayload: null,
+    online: true,
+
+    has3D: false,
+    showGrid: false,
+    isPlaying: true,
+    mapMode: "normal",
+
+    thetaOffsetRad: 0,
+    lastRotTs: 0,
+
+    mesh: null,
+
+    trend: {
+      resolution: "hour",
+      rawFrames: null,     
+      minuteSeries: null,
+      accretionData: null,
+      hasData: false,
+      busy: false
+    }
+  };
+
+  window[NS] = {
+    destroy: function () {
+      state.destroyed = true;
+      try { if (state.pollIntervalId) clearInterval(state.pollIntervalId); } catch (e) {}
+      try { if (state.rafId) cancelAnimationFrame(state.rafId); } catch (e) {}
+      try { if (state.onResize) window.removeEventListener("resize", state.onResize); } catch (e) {}
+    }
+  };
+
+  const SVG_MAX = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path></svg>`;
+  const SVG_RESTORE = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"></path></svg>`;
+
+  function getEl(id) { return document.getElementById(id); }
+  function setText(id, text) { const el = getEl(id); if (el) el.innerText = text; }
+
+  function safeOuterHTML(id, html) {
+    const el = getEl(id);
+    if (el) el.outerHTML = html;
+  }
+
+  function hasPlotly() {
+    return (typeof window.Plotly !== "undefined" && window.Plotly && typeof window.Plotly.react === "function");
+  }
+
+  window.toggleMaximize = function (target) {
+    const wrapper = getEl("main-wrapper");
+    if (!wrapper) return;
+
+    const isMax = wrapper.classList.contains(`maximized-${target}`);
+    wrapper.classList.remove("maximized-map", "maximized-trend");
+
+    safeOuterHTML("icon-map-max", SVG_MAX.replace("<svg", '<svg id="icon-map-max"'));
+    safeOuterHTML("icon-trend-max", SVG_MAX.replace("<svg", '<svg id="icon-trend-max"'));
+
+    if (!isMax) {
+      wrapper.classList.add(`maximized-${target}`);
+      safeOuterHTML(`icon-${target}-max`, SVG_RESTORE.replace("<svg", `<svg id="icon-${target}-max"`));
+    }
+
+    setTimeout(() => { window.dispatchEvent(new Event("resize")); }, 50);
+  };
+
+  // 1. Separate focusPatch logic to properly update the UI and State
+  window.focusPatch = function(pid) {
+      state.selectedPID = pid;
+      let snappedL = state.selectedLength || 0;
+      let snappedA = state.selectedAngle || 0;
+      let tMax = 0; 
+      
+      if (state.mesh && state.mesh.customdata) {
+          for (let r of state.mesh.customdata) {
+              for (let cell of r) {
+                  if (cell && cell[6] === pid) {
+                      snappedL = cell[0];
+                      snappedA = cell[1];
+                      tMax = cell[2]; 
+                  }
+              }
+          }
+      }
+
+      // STRICT SYNC: Force AI panel to match Hotspot panel exactly, and safeguard coordinates
+      if (criticalData && criticalData.hotspots) {
+          const hsMatch = criticalData.hotspots.find(h => h.pid === pid);
+          if (hsMatch) {
+              if (hsMatch.temp) tMax = parseFloat(hsMatch.temp);
+              if (hsMatch.loc) {
+                  const parts = hsMatch.loc.split(',');
+                  if (parts.length >= 2) {
+                      snappedL = parseFloat(parts[0]);
+                      snappedA = parseFloat(parts[1]);
+                  }
+              }
+          }
+      }
+      
+      // Prevent crash by guaranteeing tMax is a Number
+      tMax = parseFloat(tMax) || 0;
+      
+      state.selectedLength = snappedL;
+      state.selectedAngle = snappedA;
+      state.zoneStart = null; 
+      state.zoneEnd = null;
+
+      if (getEl("sel-length")) getEl("sel-length").value = snappedL.toFixed(1);
+      if (getEl("sel-angle")) getEl("sel-angle").value = snappedA.toFixed(1);
+
+      const titleEl = document.getElementById("trendline-title");
+      if (titleEl) titleEl.innerText = `PATCH ${pid} BEHAVIOUR (${snappedL.toFixed(1)}m, ${snappedA.toFixed(1)}°) · 10 DAY`;
+      
+      const btnReset = document.getElementById("btn-reset-trend-left");
+      if (btnReset) btnReset.style.display = "block";
+
+      if (typeof updateLiveKPIsForPatch === 'function') updateLiveKPIsForPatch(pid);
+
+      updatePatchInfoDiv(`<strong>Point Selected:</strong> ${snappedL.toFixed(1)}m, ${snappedA.toFixed(1)}° <br><small>PID: ${pid} · Temp: ${tMax.toFixed(0)}°C</small><br><br><i>Loading AI Diagnostics...</i>`);
+      
+      fetch(`/apps/dri-kiln-thermal-analytics/api/recommendation/${pid}`)
+          .then(res => res.json())
+          .then(data => {
+              let diagnosticHTML = "";
+              let aiRec = data.recommendation || "Monitor temperature closely.";
+              let aiWhy = data.xai ? data.xai.join(" ") : "Temperature deviation detected.";
+              let finalRisk = data.risk_level || "NORMAL";
+
+              // --- STRICT SYNC LOGIC (Aligned with Operator Feedback) ---
+              if (tMax >= 400) { finalRisk = "CRITICAL"; } 
+              else if (tMax > 325 && (finalRisk === "NORMAL" || finalRisk === "WARNING")) { finalRisk = "HIGH"; }
+              else if (tMax > 275 && finalRisk === "NORMAL") { finalRisk = "WARNING"; }
+
+              if(data.error && tMax <= 275) {
+                  diagnosticHTML = `<strong>Patch ${pid}</strong><br><span style="color:#E24B4A; font-weight:600;">No AI Diagnostics available: ${data.error}</span>`;
+              } else {
+                  let color = finalRisk === "CRITICAL" ? "#ef4444" : finalRisk === "HIGH" ? "#f97316" : finalRisk === "WARNING" ? "#f59e0b" : "#10b981";
+                  let riskScore = data.risk_score || (tMax > 400 ? 95 : tMax > 325 ? 75 : 20);
+                  
+                  // STRICT MATH: Calculate true deviation from normal upper limit (275°C)
+                  let dev = tMax - 275;
+                  if (tMax >= 225 && tMax <= 275) dev = 0; // Within normal limits
+                  else if (tMax < 225) dev = tMax - 225;   // Cooling deviation
+
+                  let grad = data.gradient || 0;
+                  let days = data.active_days || (tMax > 325 ? 14 : 0);
+                  let refRisk = data.refractory_risk || (tMax >= 400 ? "CRITICAL" : "LOW");
+                  
+                  // Progress bar calculation
+                  let barWidth = Math.min(100, Math.max(0, riskScore));
+                  
+                  // Get variables safely depending on which function we are in (snappedL vs length)
+                  let displayL = typeof snappedL !== 'undefined' ? snappedL : length;
+                  let displayA = typeof snappedA !== 'undefined' ? snappedA : angle;
+
+                  diagnosticHTML = `
+                      <div style="display:flex; justify-content:space-between; align-items:flex-end; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px; margin-bottom: 8px;">
+                          <div>
+                              <div style="font-size: 14px; font-weight: 700; color: #0f172a;">Patch ${pid}</div>
+                              <div style="font-size: 10px; color: #64748b;">Loc: ${displayL.toFixed(1)}m, ${displayA.toFixed(1)}°</div>
+                          </div>
+                          <div style="text-align: right;">
+                                <div style="font-size: 9px; color: #94a3b8; text-transform: uppercase; font-weight: 700; margin-bottom: 2px;">Current Temp</div>
+                                <div style="font-size: 18px; font-weight: 800; color: ${color}; line-height: 1;">${tMax.toFixed(0)}°C</div>
+                          </div>
+                      </div>
+                      
+                      <div style="display:flex; justify-content:space-between; font-size: 10px; font-weight: 700; margin-bottom: 4px;">
+                          <span style="color: #475569;">Risk Score: ${riskScore}/100</span>
+                          <span style="color: ${color};">${finalRisk}</span>
+                      </div>
+                      <div style="display: flex; gap: 2px; height: 8px; margin-bottom: 12px;">
+                          ${Array.from({length: 10}).map((_, i) => `
+                              <div style="flex: 1; border-radius: 1px; background: ${i * 10 < barWidth ? color : '#e2e8f0'};"></div>
+                          `).join('')}
+                      </div>
+
+                      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-bottom: 10px;">
+                          <div title="Temperature variation from the 250°C baseline" style="background: #f8fafc; padding: 6px; border-radius: 4px; border: 1px solid #e2e8f0;">
+                              <div style="font-size: 9px; color: #64748b; text-transform: uppercase;">Deviation</div>
+                              <div style="font-size: 12px; font-weight: 800; color: ${dev > 0 ? '#ef4444' : '#10b981'};">${dev > 0 ? '+' : ''}${dev.toFixed(0)}°C</div>
+                          </div>
+                          <div title="Consecutive days this patch has exceeded normal limits" style="background: #f8fafc; padding: 6px; border-radius: 4px; border: 1px solid #e2e8f0;">
+                              <div style="font-size: 9px; color: #64748b; text-transform: uppercase;">Active Days</div>
+                              <div style="font-size: 12px; font-weight: 800; color: ${days > 5 ? '#f59e0b' : '#0f172a'};">${days > 0 ? days + ' Days' : 'Recently'}</div>
+                          </div>
+                          <div title="Rate of temperature change across adjacent patches. >2 indicates high structural stress." style="background: transparent; padding: 4px; border: 1px dashed #cbd5e1; border-radius: 4px; display: flex; justify-content: space-between; align-items: center;">
+                              <div style="font-size: 8px; color: #94a3b8; text-transform: uppercase;">Gradient</div>
+                              <div style="font-size: 9px; font-weight: 600; color: #475569;">${grad.toFixed(2)}</div>
+                          </div>
+                          <div title="Estimated risk of brick degradation based on sustained thermal load" style="background: transparent; padding: 4px; border: 1px dashed #cbd5e1; border-radius: 4px; display: flex; justify-content: space-between; align-items: center;">
+                              <div style="font-size: 8px; color: #94a3b8; text-transform: uppercase;">Refractory</div>
+                              <div style="font-size: 9px; font-weight: 700; color: ${refRisk === 'CRITICAL' ? '#ef4444' : refRisk === 'HIGH' ? '#f97316' : '#64748b'};">${refRisk}</div>
+                          </div>
+                      </div>
+                      
+                      <div style="font-size: 10px; color: #475569; margin-bottom: 4px;"><b>Reasons:</b></div>
+                      <div style="font-size: 10px; margin-bottom: 10px; padding-left: 8px; border-left: 2px solid ${color}; color: #334155; line-height: 1.4;">
+                          ${data.xai ? data.xai.map(r => `✓ ${r}`).join('<br>') : `✓ ${aiWhy}`}
+                      </div>
+                      
+                      <div style="padding: 8px; background: ${color}15; border-left: 3px solid ${color}; border-radius: 0 4px 4px 0; font-weight: 600; font-size: 10px; color: #0f172a; line-height: 1.3;">
+                          <span style="color: ${color}; font-weight: 800;">ACTION:</span> ${aiRec}
+                      </div>
+                  `;
+              }
+              updatePatchInfoDiv(diagnosticHTML);
+          }).catch(e => {
+              // Agar server down hai (Server Error 502), toh local data se UI sync rakho
+              let fallbackRisk = tMax >= 400 ? "CRITICAL" : tMax >= 350 ? "WARNING" : "NORMAL";
+              let color = fallbackRisk === "CRITICAL" ? "#ef4444" : fallbackRisk === "WARNING" ? "#f59e0b" : "#10b981";
+              updatePatchInfoDiv(`
+                  <div style="border-bottom: 1px solid #cbd5e1; padding-bottom: 4px; margin-bottom: 4px; display:flex; justify-content:space-between;">
+                      <span><strong>Patch ${pid}</strong> (${snappedL.toFixed(1)}m, ${snappedA.toFixed(1)}°)</span>
+                      <div style="text-align: right;">
+                            <span style="font-size: 9px; color: #94a3b8; text-transform: uppercase; font-weight: 700; margin-right: 4px;">Current Temp</span>
+                            <span style="font-weight:800; color:${color}; font-size: 14px;">${tMax.toFixed(0)}°C</span>
+                      </div>
+                  </div>
+                  <div style="color: ${color}; font-weight: 800; font-size: 0.75rem;">STATUS: ${fallbackRisk}</div>
+                  <div style="font-size: 0.65rem; margin-top: 4px; line-height: 1.2; color:#64748b;"><b>Note:</b> Local threshold applied. Backend AI offline.</div>
+              `);
+          });
+
+      state.trend.resolution = "day"; syncResolutionTabsUI();
+      const endDt = new Date(); const startDt = new Date(); startDt.setDate(endDt.getDate() - 10);
+      const pad = (n) => String(n).padStart(2, '0');
+      const fmt = (d) => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+      
+      if (getEl("inp-date-start-left")) getEl("inp-date-start-left").value = fmt(startDt);
+      if (getEl("inp-date-end-left")) getEl("inp-date-end-left").value = fmt(endDt);
+
+      window.addOrUpdateHighlight();
+      setTimeout(() => { fetchTrendline(); }, 50); 
+  };
+
+  // 2. Map Highlighting function
+  window.addOrUpdateHighlight = function() {
+      if (state.mesh && typeof updateRotationGeometry === 'function') {
+         // This actually puts the yellow marker on the exact L & A on the 3D map
+         updateRotationGeometry(state.mesh.radius);
+      }
+  };
+
+  function updatePatchInfoDiv(text) {
+      const info = document.getElementById("patch-info");
+      if(info) {
+          info.innerHTML = text;
+      }
+  }
+
+  window.resetTrendSelection = function(clearInputs = true) {
+      state.selectedPID = null; state.selectedLength = null; state.selectedAngle = null;
+      state.zoneStart = null; state.zoneEnd = null; 
+      
+      document.getElementById("trendline-title").innerText = "Historical Trendline (Overall)";
+      document.getElementById("btn-reset-trend").style.display = "none";
+      updatePatchInfoDiv('<div class="placeholder-text" style="text-align: center;">Click a patch on the 3D map to view AI diagnostics.</div>');
+      
+      if (clearInputs) {
+          if(getEl("sel-length")) getEl("sel-length").value = "";
+          if(getEl("sel-angle")) getEl("sel-angle").value = "";
+          if(getEl("zone-start")) getEl("zone-start").value = "";
+          if(getEl("zone-end")) getEl("zone-end").value = "";
+      }
+
+      state.trend.resolution = "hour"; syncResolutionTabsUI();
+      if(typeof setMainMetric === 'function') setMainMetric('max'); 
+
+      const today = new Date(); const yesterday = new Date(); yesterday.setDate(today.getDate() - 1);
+      const pad = (n) => String(n).padStart(2, '0');
+      
+      const startStr = `${yesterday.getFullYear()}-${pad(yesterday.getMonth()+1)}-${pad(yesterday.getDate())}`;
+      const endStr = `${today.getFullYear()}-${pad(today.getMonth()+1)}-${pad(today.getDate())}`;
+
+      if(getEl("inp-date-start")) getEl("inp-date-start").value = startStr;
+      if(getEl("inp-date-end")) getEl("inp-date-end").value = endStr;
+      if(getEl("inp-date-start-left")) getEl("inp-date-start-left").value = startStr;
+      if(getEl("inp-date-end-left")) getEl("inp-date-end-left").value = endStr;
+
+      document.querySelectorAll(".risk-patch-btn").forEach(b => b.classList.remove("active-patch"));
+      window.addOrUpdateHighlight(); 
+      
+      if (state.latestPayload && state.latestPayload.kpis) updateKpis(state.latestPayload.kpis);
+      
+      showTrendPlaceholder("Restoring Global Data...");
+      setTimeout(() => { fetchTrendline(); }, 50);
+  };
+
+  window.fetchZoneTrend = function() {
+      const zs = parseFloat(getEl("zone-start").value);
+      const ze = parseFloat(getEl("zone-end").value);
+      if (isNaN(zs) || isNaN(ze)) return;
+      
+      state.zoneStart = zs; state.zoneEnd = ze;
+      state.selectedPID = null; state.selectedLength = null; state.selectedAngle = null;
+      
+      document.getElementById("trendline-title").innerText = `Zone Trend (${zs}m to ${ze}m) - 10 Day`;
+      document.getElementById("btn-reset-trend").style.display = "inline-flex";
+      updatePatchInfoDiv(`<strong>Zone Selected:</strong> ${zs}m to ${ze}m`);
+      
+      if(typeof updateLiveKPIsForZone === 'function') updateLiveKPIsForZone(zs, ze);
+      
+      if(getEl("sel-length")) getEl("sel-length").value = "";
+      if(getEl("sel-angle")) getEl("sel-angle").value = "";
+
+      state.trend.resolution = "hour"; syncResolutionTabsUI();
+      const endDt = new Date(); const startDt = new Date(); startDt.setDate(endDt.getDate() - 1);
+      const pad = (n) => String(n).padStart(2, '0');
+      if(getEl("inp-date-start")) getEl("inp-date-start").value = `${startDt.getFullYear()}-${pad(startDt.getMonth()+1)}-${pad(startDt.getDate())}`;
+      if(getEl("inp-date-end")) getEl("inp-date-end").value = `${endDt.getFullYear()}-${pad(endDt.getMonth()+1)}-${pad(endDt.getDate())}`;
+
+      document.querySelectorAll(".risk-patch-btn").forEach(b => b.classList.remove("active-patch"));
+      window.addOrUpdateHighlight(); 
+      
+      showTrendPlaceholder(`Fetching Zone ${zs}m - ${ze}m data...`);
+      setTimeout(() => { fetchTrendline(); }, 50); 
+  };
+
+  window.handleManualSelection = function() {
+      const eSelLen = document.getElementById("sel-length");
+      const eSelAng = document.getElementById("sel-angle");
+      if (!eSelLen || !eSelAng || eSelLen.value === "" || eSelAng.value === "") return window.resetTrendSelection(false); 
+
+      const inputL = parseFloat(eSelLen.value); const inputA = parseFloat(eSelAng.value);
+      let bestPID = -1, minDistance = Infinity, snappedL = inputL, snappedA = inputA;
+      
+      if (state.mesh && state.mesh.customdata) {
+          for (let r of state.mesh.customdata) {
+              for (let cell of r) {
+                  if (cell) {
+                      const dist = Math.sqrt(Math.pow(cell[0] - inputL, 2) + Math.pow(cell[1] - inputA, 2));
+                      if (dist < minDistance) { minDistance = dist; bestPID = cell[6]; snappedL = cell[0]; snappedA = cell[1]; }
+                  }
+              }
+          }
+      }
+
+      if (bestPID >= 0) {
+          state.selectedPID = bestPID; state.selectedLength = snappedL; state.selectedAngle = snappedA;
+          state.zoneStart = null; state.zoneEnd = null;
+
+          eSelLen.value = snappedL.toFixed(1); eSelAng.value = snappedA.toFixed(1);
+          if(getEl("zone-start")) getEl("zone-start").value = "";
+          if(getEl("zone-end")) getEl("zone-end").value = "";
+
+          document.getElementById("trendline-title").innerText = `Patch Trend (${snappedL.toFixed(1)}m, ${snappedA.toFixed(1)}°) - 10 Day`;
+          document.getElementById("btn-reset-trend").style.display = "inline-flex";
+          updatePatchInfoDiv(`<strong>Point Selected:</strong> ${snappedL.toFixed(1)}m, ${snappedA.toFixed(1)}° <br><small>PID: ${bestPID}</small>`);
+
+          if(typeof updateLiveKPIsForPatch === 'function') updateLiveKPIsForPatch(bestPID);
+
+          state.trend.resolution = "day"; syncResolutionTabsUI();
+          
+          // YAHAN FIX KIYA HAI: Do baar 'const' ab nahi aayega, sirf 90 days ka logic hai.
+          const endDt = new Date(); const startDt = new Date(); startDt.setDate(endDt.getDate() - 10);
+          const pad = (n) => String(n).padStart(2, '0');
+          
+          const startStr = `${startDt.getFullYear()}-${pad(startDt.getMonth()+1)}-${pad(startDt.getDate())}`;
+          const endStr = `${endDt.getFullYear()}-${pad(endDt.getMonth()+1)}-${pad(endDt.getDate())}`;
+
+          if(getEl("inp-date-start")) getEl("inp-date-start").value = startStr;
+          if(getEl("inp-date-end")) getEl("inp-date-end").value = endStr;
+          if(getEl("inp-date-start-left")) getEl("inp-date-start-left").value = startStr;
+          if(getEl("inp-date-end-left")) getEl("inp-date-end-left").value = endStr;
+
+          document.querySelectorAll(".risk-patch-btn").forEach(b => b.classList.remove("active-patch"));
+          
+          showTrendPlaceholder(`Fetching Patch ${bestPID} data...`);
+          setTimeout(() => { fetchTrendline(); }, 50);
+      }
+  };
+
+  function init() {
+    const API_LATEST = "/apps/dri-kiln-thermal-analytics/api/latest";
+    const API_TRENDLINE = "/apps/dri-kiln-thermal-analytics/api/trendline";
+    const API_AI_PREDICT = "/apps/dri-kiln-thermal-analytics/api/ai-predict";
+
+    const RADIUS = 2.1;
+    const DEFAULT_HOME_EYE = { x: 0.0, y: -2.8, z: 0.4 };
+    
+    getEl("kiln-metric-controls").addEventListener("click", (e) => {
+        const btn = e.target.closest("button[data-kmetric]");
+        if (btn) { setTimeout(fetchTrendline, 50); }
+    });
+
+    // NEW: Map Mode Toggle Logic
+    // NEW: Map Mode Toggle Logic
+    const modeControls = getEl("map-mode-controls");
+    if (modeControls) {
+        modeControls.addEventListener("click", (e) => {
+            const btn = e.target.closest("button[data-mode]");
+            if (!btn) return;
+            
+            modeControls.querySelectorAll("button").forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+            
+            const newMode = btn.getAttribute("data-mode");
+            state.mapMode = newMode;
+            
+            // NEW: Show/Hide the Anomaly Detection card based on the mode
+            const anomalyCard = getEl("card-anomaly-detection");
+            if (anomalyCard) {
+                anomalyCard.style.display = (newMode === "anomaly") ? "flex" : "none";
+            }
+
+            if (typeof window.forceDataRender === "function") window.forceDataRender();
+        });
+    }
+
+    getEl("trend-res-tabs").addEventListener("click", (e) => {
+        const btn = e.target.closest("button[data-res]");
+        if (btn) {
+            state.trend.resolution = btn.getAttribute("data-res");
+            setTimeout(fetchTrendline, 50);
+        }
+    });
+    
+    const ePlay = getEl("btn-play");
+    if (ePlay) ePlay.onclick = () => { state.isPlaying = true; };
+
+    const ePause = getEl("btn-pause");
+    if (ePause) ePause.onclick = () => { state.isPlaying = false; };
+
+    const eZoom = getEl("inp-zoom");
+    if (eZoom) {
+        eZoom.oninput = (e) => {
+            const zVal = parseFloat(e.target.value);
+            const gd = getEl("kiln-3d-viewport");
+            if (gd && gd.layout && gd.layout.scene && gd.layout.scene.camera) {
+                const cam = gd.layout.scene.camera;
+                const len = Math.sqrt(Math.pow(cam.eye.x, 2) + Math.pow(cam.eye.y, 2) + Math.pow(cam.eye.z, 2));
+                if (len === 0) return;
+                
+                const dir = { x: cam.eye.x/len, y: cam.eye.y/len, z: cam.eye.z/len };
+                const maxDist = 8.0; 
+                const minDist = 1.0; 
+                const fraction = (zVal - 1) / 9.0;
+                const newDist = maxDist - fraction * (maxDist - minDist);
+                
+                Plotly.relayout(gd, {
+                    "scene.camera.eye": { x: dir.x * newDist, y: dir.y * newDist, z: dir.z * newDist }
+                }).catch(()=>{});
+            }
+        };
+    }
+
+    const eGrid = getEl("chk-grid");
+    if (eGrid) eGrid.onchange = (e) => {
+      state.showGrid = !!(e && e.target && e.target.checked);
+      const gd = getEl("kiln-3d-viewport");
+      if (state.has3D && hasPlotly() && gd) {
+        Plotly.restyle(gd, {
+          "contours.x.show": state.showGrid,
+          "contours.z.show": state.showGrid
+        }, [0]).catch(() => {});
+        Plotly.relayout(gd, { "uirevision": UIREV }).catch(() => {});
+      }
+    };
+
+    const btnTrend = getEl("btn-trend");
+    const btnAccretion = getEl("btn-accretion");
+    if (btnTrend && btnAccretion) {
+        btnTrend.onclick = () => {
+            btnTrend.classList.add("active");
+            btnAccretion.classList.remove("active");
+            getEl("trend-metric-mirror").style.display = "flex";
+            getEl("trend-res-tabs").style.display = "flex";
+            renderTrendline();
+        };
+        btnAccretion.onclick = () => {
+            btnAccretion.classList.add("active");
+            btnTrend.classList.remove("active");
+            getEl("trend-metric-mirror").style.display = "none";
+            getEl("trend-res-tabs").style.display = "none";
+            renderTrendline();
+        };
+    }
+
+    bindTrendHeaderTools();
+
+    const eFetch = getEl("btn-fetch-history");
+    const eExport = getEl("btn-export-excel");
+    if (eExport) {
+        eExport.onclick = async () => {
+            const originalText = eExport.innerText;
+            eExport.innerText = "EXPORTING...";
+            eExport.disabled = true;
+
+            try {
+                const res = await fetch("/apps/dri-kiln-thermal-analytics/api/export-excel", {
+                    method: "POST",
+                    credentials: "same-origin",
+                    headers: { "Accept": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }
+                });
+                if (!res.ok) throw new Error("Download failed: " + res.status);
+                
+                const blob = await res.blob();
+                const url = window.URL.createObjectURL(blob);
+                const link = document.createElement("a");
+                link.href = url;
+                link.download = "kiln_patch_10day_avg.xlsx";
+                document.body.appendChild(link);
+                link.click();
+                
+                document.body.removeChild(link);
+                window.URL.revokeObjectURL(url);
+            } catch (err) {
+                console.error("Export Error:", err);
+                alert("Excel export failed: " + err.message);
+            } finally {
+                eExport.innerText = originalText;
+                eExport.disabled = false;
+            }
+        };
+    }
+    if (eFetch) eFetch.onclick = fetchTrendline;
+
+    state.onResize = () => {
+        if (!hasPlotly()) return;
+        const p1 = getEl("kiln-3d-viewport");
+        const p3 = getEl("trendline-plot");
+        if (p1) Plotly.Plots.resize(p1);
+        if (p3) Plotly.Plots.resize(p3);
+    };
+    window.addEventListener("resize", state.onResize);
+
+    window.forceDataRender = function () {
+      syncTrendMetricMirror();
+      if (state.latestPayload) renderAll(state.latestPayload, RADIUS, DEFAULT_HOME_EYE);
+      renderTrendline();
+    };
+
+    syncTrendMetricMirror();
+    syncResolutionTabsUI();
+
+    fetchLatest();
+
+    const today = new Date();
+    const yesterday = new Date();
+    yesterday.setDate(today.getDate() - 1);
+
+    const s = getEl("inp-date-start");
+    const e = getEl("inp-date-end");
+    const sLeft = getEl("inp-date-start-left");
+    const eLeft = getEl("inp-date-end-left");
+    
+    const todayStr = today.toISOString().split("T")[0];
+    const yesterdayStr = yesterday.toISOString().split("T")[0];
+    
+    if (s) s.value = yesterdayStr;
+    if (e) e.value = todayStr;
+    if (sLeft) sLeft.value = yesterdayStr;
+    if (eLeft) eLeft.value = todayStr;
+    
+    // Sync Left Dates with Main Dates
+    const syncDates = (sourceStart, sourceEnd, targetStart, targetEnd) => {
+        if (targetStart && sourceStart) targetStart.value = sourceStart.value;
+        if (targetEnd && sourceEnd) targetEnd.value = sourceEnd.value;
+        fetchTrendline();
+    };
+    if (sLeft) sLeft.onchange = () => syncDates(sLeft, eLeft, s, e);
+    if (eLeft) eLeft.onchange = () => syncDates(sLeft, eLeft, s, e);
+    if (s) s.onchange = () => syncDates(s, e, sLeft, eLeft);
+    if (e) e.onchange = () => syncDates(s, e, sLeft, eLeft);
+
+    // Bind Left Panel Controls
+    const btnZoneLeft = getEl("btn-apply-zone-left");
+    if (btnZoneLeft) {
+        btnZoneLeft.onclick = () => {
+            const zs = parseFloat(getEl("inp-zone-start-left").value);
+            const ze = parseFloat(getEl("inp-zone-end-left").value);
+            if (isNaN(zs) || isNaN(ze)) return alert("Please enter valid start and end lengths.");
+            
+            // Populate hidden inputs expected by original logic
+            let hiddenStart = getEl("zone-start"); if(!hiddenStart) { hiddenStart = document.createElement("input"); hiddenStart.id = "zone-start"; document.body.appendChild(hiddenStart); }
+            let hiddenEnd = getEl("zone-end"); if(!hiddenEnd) { hiddenEnd = document.createElement("input"); hiddenEnd.id = "zone-end"; document.body.appendChild(hiddenEnd); }
+            hiddenStart.value = zs; hiddenEnd.value = ze;
+            
+            window.fetchZoneTrend();
+            getEl("btn-reset-trend-left").style.display = "block";
+            getEl("btn-run-prediction-left").style.display = "block";
+        };
+    }
+
+    const btnPointLeft = getEl("btn-apply-point-left");
+    if (btnPointLeft) {
+        btnPointLeft.onclick = () => {
+            const l = parseFloat(getEl("inp-point-len-left").value);
+            const a = parseFloat(getEl("inp-point-ang-left").value);
+            if (isNaN(l) || isNaN(a)) return alert("Please enter valid length and angle.");
+            
+            let hiddenL = getEl("sel-length"); if(!hiddenL) { hiddenL = document.createElement("input"); hiddenL.id = "sel-length"; document.body.appendChild(hiddenL); }
+            let hiddenA = getEl("sel-angle"); if(!hiddenA) { hiddenA = document.createElement("input"); hiddenA.id = "sel-angle"; document.body.appendChild(hiddenA); }
+            hiddenL.value = l; hiddenA.value = a;
+            
+            window.handleManualSelection();
+            getEl("btn-reset-trend-left").style.display = "block";
+            getEl("btn-run-prediction-left").style.display = "block";
+        };
+    }
+
+    const btnResetLeft = getEl("btn-reset-trend-left");
+    if (btnResetLeft) {
+        btnResetLeft.onclick = () => {
+            window.resetTrendSelection(true);
+            btnResetLeft.style.display = "none";
+            getEl("btn-run-prediction-left").style.display = "none";
+            if(getEl("inp-zone-start-left")) getEl("inp-zone-start-left").value = "";
+            if(getEl("inp-zone-end-left")) getEl("inp-zone-end-left").value = "";
+            if(getEl("inp-point-len-left")) getEl("inp-point-len-left").value = "";
+            if(getEl("inp-point-ang-left")) getEl("inp-point-ang-left").value = "";
+        };
+    }
+
+    const btnPredictLeft = getEl("btn-run-prediction-left");
+
+    if (btnPredictLeft) {
+        btnPredictLeft.onclick = async () => {
+            const originalText = btnPredictLeft.innerText;
+            btnPredictLeft.innerText = "⏳ COMPUTING...";
+            btnPredictLeft.disabled = true;
+
+            try {
+                // 1. Grab real data from the current chart state
+                // 1. Grab real data from the current chart state
+                if (!state.trend.minuteSeries || state.trend.minuteSeries.length < 5) {
+                    throw new Error("Not enough data points on the chart to run prediction.");
+                }
+
+                const metric = getTrendMetric(); 
+                // Map to the object structure your Flask proxy expects
+                const sequenceData = state.trend.minuteSeries.slice(-20).map(item => ({
+                    metric_val: parseFloat(item[metric] || item.max || 0)
+                }));
+                
+                let is_daily = state.trend.resolution === "day";
+                let forecast_steps = is_daily ? 10 : 24; 
+
+                // HIT THE FLASK PROXY, NOT FASTAPI DIRECTLY
+                const response = await fetch(
+                    `/apps/dri-kiln-thermal-analytics/api/predict-trend/${state.selectedPID || 0}`,
+                    { 
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ 
+                            history: sequenceData,
+                            steps: forecast_steps  
+                        })
+                    }
+                );
+
+                const result = await response.json();
+
+                if (!response.ok || result.error) {
+                    updatePatchInfoDiv(`
+                        <div style="padding:10px;">
+                            <h3 style="color:#E24B4A; margin-bottom: 8px;">AI Prediction Failed</h3>
+                            <p style="color:#475569; font-size:12px;">${result.error || 'The model server rejected the data.'}</p>
+                        </div>
+                    `);
+                    return;
+                }
+
+                // 4. Render the AI results in the UI
+                const lastHistData = state.trend.minuteSeries[state.trend.minuteSeries.length - 1];
+                const last_x = lastHistData.t;
+                const last_y = parseFloat(lastHistData[metric] || lastHistData.max || 0);
+
+                let future_xs = [last_x];
+                let future_ys = [last_y];
+
+                let time_step_ms = is_daily ? (24 * 60 * 60 * 1000) : (60 * 60 * 1000); 
+                let current_ms = last_x.getTime();
+                
+                for (let i = 0; i < forecast_steps; i++) {
+                    future_xs.push(new Date(current_ms + ((i + 1) * time_step_ms)));
+                    let p_val = (result.predictions && result.predictions[i] !== undefined) 
+                                ? result.predictions[i] : result.future_temperature;
+                    future_ys.push(p_val);
+                }
+
+                const trace3 = {
+                    x: future_xs, 
+                    y: future_ys, 
+                    name: "AI Forecast",
+                    mode: 'lines+markers', 
+                    line: { color: "#a855f7", width: 2, shape: 'spline', dash: 'dot' }, 
+                    marker: { size: 6, color: "#a855f7" },
+                    hovertemplate: '<b>%{x|%b %d, %H:%M}</b><br><br><span style="color:#a855f7">■</span> AI Forecast: %{y:.0f}°C<extra></extra>'
+                };
+
+                const existingData = document.getElementById("trendline-plot").data || [];
+                const cleanData = existingData.filter(t => t.name !== "AI Forecast"); 
+                const layout = document.getElementById("trendline-plot").layout;
+                
+                // FIX 3: Clean up axes, add margin, and draw a divider line for AI
+                // FIX 3: Aggressively nuke Plotly's axis cache so it zooms out cleanly
+                if (layout && layout.xaxis && layout.yaxis) {
+                    layout.margin.r = 60; // Expand right margin
+                    
+                    // Nuke the X-axis memory so it recalculates for the extended dates
+                    layout.xaxis.autorange = true;
+                    delete layout.xaxis.range;
+                    delete layout.xaxis.dtick;
+                    layout.xaxis.tickmode = 'auto';
+                    
+                    // Nuke the Y-axis memory
+                    layout.yaxis.autorange = true;
+                    delete layout.yaxis.range;
+                    
+                    if (layout.yaxis2) {
+                        layout.yaxis2.autorange = true;
+                        delete layout.yaxis2.range;
+                    }
+                    
+                    // Add a vertical divider line between History and AI Future
+                    layout.shapes = layout.shapes || [];
+                    layout.shapes.push({
+                        type: 'line', xref: 'x', yref: 'paper',
+                        x0: last_x, x1: last_x, y0: 0, y1: 1,
+                        line: { color: '#a855f7', width: 2, dash: 'dot' }
+                    });
+                }
+                
+                Plotly.react("trendline-plot", [...cleanData, trace3], layout);
+
+                updatePatchInfoDiv(`
+                   <div style="padding:10px;">
+                      <h3 style="color:#7c3aed;">AI Prediction Result</h3>
+                      <br>
+                      <b>Future Temperature:</b> ${result.future_temperature} °C
+                      <br><br>
+                      <b>Trend:</b> ${result.trend}
+                      <br><br>
+                      <b>Risk Level:</b> ${result.risk_level}
+                   </div>
+               `);
+               
+               btnPredictLeft.innerText = "Back to History";
+               btnPredictLeft.onclick = () => {
+                   renderTrendline(); 
+               };
+               
+            } catch(err) {
+                console.error("Local Server Connection Error:", err);
+                updatePatchInfoDiv(`
+                    <div style="padding:10px; color:#E24B4A;">
+                        <b>Critical Error:</b> Could not communicate with the local AI.<br><br><small>${err.message}</small>
+                    </div>
+                `);
+            } finally {
+                if (btnPredictLeft.innerText !== "Back to History") {
+                    btnPredictLeft.innerText = originalText;
+                }
+                btnPredictLeft.disabled = false;
+            }
+        };
+    }
+
+    fetchTrendline();
+
+    // Unified poll interval
+    state.pollIntervalId = setInterval(() => {
+        fetchLatest();
+        fetchCriticalPatches(); 
+    }, 120000);
+    
+    state.rafId = requestAnimationFrame(rotationLoop);
+
+    let criticalData = { accretion: [], insulation: [], hotspots: [] };
+    let currentRiskMode = "accretion";
+
+    // NEW: Aggregates patches into 2-meter physical bands (e.g., 48m - 50m)
+    function groupInto2mBands(items, type) {
+        const bands = {};
+        items.forEach(item => {
+            const lenStr = item.length !== undefined ? item.length : item.loc.split(',')[0];
+            const len = parseFloat(lenStr);
+            const bandStart = Math.floor(len / 2) * 2;
+            const bandKey = `${bandStart}m - ${bandStart + 2}m`;
+            
+            if (!bands[bandKey]) {
+                bands[bandKey] = {
+                    key: bandKey, start: bandStart, patches: [],
+                    maxTemp: 0, maxScore: 0, severity: type === 'hotspot' ? 'WARNING' : 'LOW', trend: '→ Stable'
+                };
+            }
+            
+            bands[bandKey].patches.push(item);
+            
+            if (type === 'hotspot') {
+                if (item.temp > bands[bandKey].maxTemp) {
+                    bands[bandKey].maxTemp = item.temp;
+                    bands[bandKey].severity = item.temp >= 400 ? 'CRITICAL' : item.temp >= 325 ? 'HIGH' : 'WARNING';
+                    bands[bandKey].trend = item.trend;
+                }
+            } else {
+                let absSlope = Math.abs(item.slope || 0);
+                let riskScore = Math.min(100, Math.max(0, Math.floor(absSlope * 40 + (item.temp > 300 ? 30 : 0))));
+                item._calculatedScore = riskScore;
+                if (riskScore > bands[bandKey].maxScore) {
+                    bands[bandKey].maxScore = riskScore;
+                    bands[bandKey].severity = riskScore > 80 ? 'HIGH' : riskScore > 50 ? 'MEDIUM' : 'LOW';
+                    bands[bandKey].trend = item.slope > 0.5 ? "↑ Increasing" : item.slope < -0.5 ? "↓ Decreasing" : "→ Stable";
+                }
+            }
+        });
+        
+        return Object.values(bands).sort((a, b) => {
+            if (type === 'hotspot') return b.maxTemp - a.maxTemp;
+            return b.maxScore - a.maxScore;
+        });
+    }
+
+    async function fetchCriticalPatches() {
+        try {
+            const res = await fetch("/apps/dri-kiln-thermal-analytics/api/critical-patches");
+            if (!res.ok) throw new Error("HTTP " + res.status);
+            const data = await res.json();
+            if (data.status === "success") {
+                criticalData.accretion = data.accretion;
+                criticalData.insulation = data.insulation;
+                criticalData.hotspots = data.hotspots || [];
+                renderRiskGrid();
+
+                const topBtn = document.getElementById("btn-hotspot-alert");
+                const topList = document.getElementById("hotspot-list");
+                const rightContainer = document.getElementById("hotspot-list-container");
+                const rightCount = document.getElementById("hotspot-count-right");
+                
+                if (data.hotspots && data.hotspots.length > 0) {
+                    // 1. Sort hotspots by highest temperature first (taaki sabse danger pehle aayen)
+                    const sortedHotspots = data.hotspots.sort((a, b) => b.temp - a.temp);
+                    
+                    // 2. Limit the display to Top 10 to prevent UI spam
+                    const MAX_DISPLAY = 10;
+                    const topHotspots = sortedHotspots.slice(0, MAX_DISPLAY);
+                    const totalHidden = sortedHotspots.length - MAX_DISPLAY;
+
+                    // Update Top Alert Bar counts (keep the real total)
+                    const topCount = document.getElementById("hotspot-count");
+                    if (topCount) topCount.innerText = sortedHotspots.length;
+                    if(rightCount) rightCount.innerText = sortedHotspots.length;
+                    if(topBtn) topBtn.style.display = "flex";
+                    
+                    // Determine Highest Risk Region for Top Banner
+                    const groupedForBanner = groupInto2mBands(sortedHotspots, 'hotspot');
+                    const topRegionStr = groupedForBanner.length > 0 ? groupedForBanner[0].key : "N/A";
+
+                    // Chips logic for top bar - Industrial Layout
+                    const regions = Math.max(1, Math.ceil(sortedHotspots.length / 5));
+                    const highestTemp = sortedHotspots[0].temp;
+
+                    const chipsContainer = document.getElementById("alert-chips");
+                    if (chipsContainer) {
+                        chipsContainer.innerHTML = `
+                            <div class="achip" style="background:#fff; border:none; color:#1e293b; font-weight:700;">${regions} Hotspot Regions</div>
+                            <div class="achip" style="background:#fff; border:none; color:#ef4444; font-weight:700;">Max Temp: ${highestTemp.toFixed(0)}&deg;C</div>
+                            <div class="achip" style="background:#450a0a !important; border: 1px solid #fca5a5 !important; color:#fca5a5 !important; font-weight:800;">Max Risk: ${topRegionStr}</div>
+                        `;
+                    }
+
+                    // Update Dropdown (Limit to max 10 to prevent massive scroll list)
+                    if(topList) {
+                        topList.innerHTML = topHotspots.map(h => 
+                            `<li style="padding:8px; border-bottom:1px solid #eee; cursor:pointer;" onclick="window.focusPatch(${h.pid})"><b>PID ${h.pid}</b> - <span style="color:#E24B4A">${h.temp.toFixed(0)}°C</span></li>`
+                        ).join("") + (totalHidden > 0 ? `<li style="padding:8px; text-align:center; color:#94a3b8; font-size:11px;">+ ${totalHidden} more hidden...</li>` : "");
+                    }
+                    
+                    // Update NEW Right Column UI (Limit to max 10)
+                    // Update Right Column UI (Grouped into Regions with Drill-down)
+                    if (rightContainer) {
+                        const groupedHotspots = groupInto2mBands(sortedHotspots, 'hotspot');
+                        
+                        // NEW Color Logic: <350=Orange, 350-400=Dark Orange, 400+=Red
+                        const getTempColor = (t) => t >= 400 ? '#ef4444' : t >= 350 ? '#ea580c' : '#f97316';
+
+                        rightContainer.innerHTML = groupedHotspots.slice(0, 8).map((g, idx) => {
+                            let sevColor = getTempColor(g.maxTemp);
+                            
+                            // Build the hidden child rows
+                            const childHtml = g.patches.map(h => `
+                                <div class="hs-row-child" onclick="event.stopPropagation(); window.focusPatch(${h.pid});" style="padding: 8px 16px; border-top: 1px dashed #e2e8f0; cursor: pointer; background: #f8fafc; transition: background 0.2s;">
+                                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                                        <div style="font-size: 11px; font-weight: 700; color: #475569;">PID ${h.pid} <span style="color:#94a3b8; margin-left:4px; font-weight: 500;">Angle: ${parseFloat(h.loc.split(',')[1]).toFixed(1)}°</span></div>
+                                        <div style="font-size: 12px; font-weight: 800; color: ${getTempColor(h.temp)};">${parseFloat(h.temp).toFixed(0)}°C</div>
+                                    </div>
+                                </div>
+                            `).join('');
+
+                            return `
+                            <div style="border-bottom: 1px solid #e2e8f0;">
+                                <div onclick="const list = document.getElementById('hs-group-${idx}'); list.style.display = list.style.display === 'none' ? 'block' : 'none';" style="padding: 12px; cursor: pointer; transition: background 0.2s;">
+                                    
+                                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+                                        <div>
+                                            <div style="font-size: 14px; font-weight: 800; color: #0f172a;">${g.key} Region</div>
+                                            <div style="font-size: 10px; font-weight: 700; color: #64748b; margin-top: 2px;">${g.patches.length} Hot Patches <span style="font-size:8px;">▼</span></div>
+                                        </div>
+                                        <div style="text-align: right;">
+                                            <div style="font-size: 18px; font-weight: 800; color: ${sevColor};">${parseFloat(g.maxTemp).toFixed(0)}°C</div>
+                                            <div style="font-size: 9px; color: #64748b; text-transform: uppercase;">Max Temp</div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div style="display: flex; justify-content: space-between; font-size: 10px; color: #64748b; align-items: center;">
+                                        <div style="padding: 2px 6px; border-radius: 4px; font-size: 9px; font-weight: 800; color: ${sevColor}; border: 1px solid ${sevColor}40;">${g.severity}</div>
+                                        <div style="font-weight: 700; font-size: 11px; color: ${g.trend.includes('↑') ? '#ef4444' : g.trend.includes('↓') ? '#10b981' : '#f59e0b'};">${g.trend}</div>
+                                    </div>
+                                </div>
+                                
+                                <div id="hs-group-${idx}" style="display: none;">
+                                    ${childHtml}
+                                </div>
+                            </div>`;
+                        }).join("") + (groupedHotspots.length > 8 ? `<div style="padding:12px; font-size:10px; text-align:center; color:#94a3b8; background:#f8fafc;">+ ${groupedHotspots.length - 8} regions hidden</div>` : '');
+                    }
+                } else {
+                    if(topBtn) topBtn.style.display = "none";
+                    if(rightContainer) rightContainer.innerHTML = `<div class="placeholder-text">No critical hotspots</div>`;
+                    if(rightCount) rightCount.innerText = "0";
+                }
+            }
+        } catch (e) { 
+            console.error("Failed to load critical patches", e); 
+            const rightContainer = document.getElementById("hotspot-list-container");
+            const riskContainer = document.getElementById("risk-grid-container");
+            if(rightContainer) rightContainer.innerHTML = `<div class="placeholder-text" style="color:#E24B4A; text-align:center;">Server Error (502).<br>Failed to fetch hotspots.</div>`;
+            if(riskContainer) riskContainer.innerHTML = `<div class="placeholder-text" style="color:#E24B4A; text-align:center;">Server Error (502).<br>Failed to fetch risk zones.</div>`;
+        }
+    }
+
+    function renderRiskGrid() {
+        const container = document.getElementById("risk-grid-container");
+        if (!container) return;
+        
+        const list = currentRiskMode === "accretion" ? criticalData.accretion : criticalData.insulation;
+        if (!list || list.length === 0) {
+            container.innerHTML = '<div class="placeholder-text">No data available.</div>';
+            return;
+        }
+        
+        container.style.padding = "0"; 
+        
+        const groupedZones = groupInto2mBands(list, 'risk');
+        
+        container.innerHTML = groupedZones.map((g, idx) => {
+            const isAcc = currentRiskMode === "accretion";
+            let color = g.severity === "HIGH" ? "#ef4444" : g.severity === "MEDIUM" ? "#f59e0b" : "#10b981";
+            let reason = isAcc ? (g.maxScore > 80 ? "Rapid Accretion Growth" : "Accretion Forming") 
+                               : (g.maxScore > 80 ? "Refractory Thinning" : "Insulation Loss");
+            let trendColor = g.trend.includes('↑') ? "#ef4444" : g.trend.includes('↓') ? "#10b981" : "#f59e0b";
+
+            // Build hidden child rows
+            const childHtml = g.patches.map(p => `
+                <div class="rz-row-child" onclick="event.stopPropagation(); window.focusRiskPatch(${p.pid}, ${p.length}, ${p.angle}, '${p.start_date || ''}');" style="display: flex; justify-content: space-between; align-items: center; padding: 8px 16px; border-top: 1px dashed #e2e8f0; cursor: pointer; background: #f8fafc; transition: background 0.2s;">
+                    <div style="font-size: 11px; font-weight: 700; color: #475569;">PID ${p.pid} <span style="color:#94a3b8; margin-left:4px; font-weight: 500;">Angle: ${p.angle.toFixed(1)}°</span></div>
+                    <div style="font-size: 11px; font-weight: 800; color: ${color};">Score: ${p._calculatedScore || 0}</div>
+                </div>
+            `).join('');
+
+            return `
+            <div style="border-bottom: 1px solid #e2e8f0;">
+                <div onclick="const list = document.getElementById('rz-group-${idx}'); list.style.display = list.style.display === 'none' ? 'block' : 'none';" style="display: flex; padding: 12px; gap: 16px; cursor: pointer; align-items: center; transition: background 0.2s;">
+                    
+                    <div style="flex: 0 0 70px; display: flex; flex-direction: column; gap: 4px;">
+                        <div style="font-size: 16px; font-weight: 800; color: #0f172a;">${g.key}</div>
+                        <div style="font-size: 9px; font-weight: 700; color: #64748b;">${g.patches.length} Affected <span style="font-size:8px;">▼</span></div>
+                        <div style="padding: 2px 6px; border-radius: 4px; font-size: 9px; font-weight: 800; color: ${color}; border: 1px solid ${color}40; text-align: center; width: fit-content; text-transform: uppercase;">
+                            ${g.severity}
+                        </div>
+                    </div>
+                    
+                    <div style="flex: 1; display: grid; grid-template-columns: max-content 1fr; gap: 4px 8px; font-size: 10px; align-items: center;">
+                        <span style="color: #94a3b8; font-size: 9px; text-transform: uppercase;">Condition</span>
+                        <span style="font-weight: 700; color: #0f172a; text-align: right;">${reason}</span>
+                        
+                        <span style="color: #94a3b8; font-size: 9px; text-transform: uppercase;">Max Score</span>
+                        <div style="display: flex; align-items: center; justify-content: flex-end; gap: 6px;">
+                            <div style="width: 45px; height: 5px; background: #e2e8f0; border-radius: 3px; overflow: hidden; display: flex;">
+                                <div style="width: ${g.maxScore}%; background: ${color}; transition: width 0.3s ease;"></div>
+                            </div>
+                            <span style="font-weight: 800; color: ${color};">${g.maxScore}</span>
+                        </div>
+                        
+                        <span style="color: #94a3b8; font-size: 9px; text-transform: uppercase;">Risk Trend</span>
+                        <span style="font-weight: 700; color: ${trendColor}; text-align: right;">${g.trend}</span>
+                    </div>
+                </div>
+                
+                <div id="rz-group-${idx}" style="display: none;">
+                    ${childHtml}
+                </div>
+            </div>`;
+        }).join("");
+    }
+
+    window.focusRiskPatch = function(pid, length, angle, startDateStr) {
+        state.selectedPID = pid;
+        state.selectedLength = length;
+        state.selectedAngle = angle;
+        state.zoneStart = null; 
+        state.zoneEnd = null;
+
+        let tMax = 0; 
+        if (state.mesh && state.mesh.customdata) {
+            for (let r of state.mesh.customdata) {
+                for (let cell of r) {
+                    if (cell && cell[6] === pid) {
+                        tMax = cell[2];
+                    }
+                }
+            }
+        }
+
+        // STRICT SYNC: Force AI panel to match Hotspot panel exactly
+        if (criticalData && criticalData.hotspots) {
+            const hsMatch = criticalData.hotspots.find(h => h.pid === pid);
+            if (hsMatch && hsMatch.temp) {
+                tMax = parseFloat(hsMatch.temp);
+            }
+        }
+        
+        // Prevent crash by guaranteeing tMax is a Number
+        tMax = parseFloat(tMax) || 0;
+
+        if (getEl("sel-length")) getEl("sel-length").value = length.toFixed(1);
+        if (getEl("sel-angle")) getEl("sel-angle").value = angle.toFixed(1);
+
+        const titleEl = document.getElementById("trendline-title");
+        const btnReset = document.getElementById("btn-reset-trend-left");
+        if (titleEl) titleEl.innerText = `PATCH ${pid} BEHAVIOUR (${length.toFixed(1)}m, ${angle.toFixed(1)}°) · 10 DAY`;
+        if (btnReset) btnReset.style.display = "block";
+
+        if (typeof updateLiveKPIsForPatch === 'function') updateLiveKPIsForPatch(pid);
+
+        updatePatchInfoDiv(`<strong>Point Selected:</strong> ${length.toFixed(1)}m, ${angle.toFixed(1)}° <br><small>PID: ${pid} · Temp: ${tMax.toFixed(0)}°C</small><br><br><i>Loading AI Diagnostics...</i>`);
+        
+        fetch(`/apps/dri-kiln-thermal-analytics/api/recommendation/${pid}`)
+            .then(res => res.json())
+            .then(data => {
+                let aiRec = data.recommendation || "Monitor temperature closely.";
+                let aiWhy = data.xai ? data.xai.join(" ") : "Temperature deviation detected.";
+                let finalRisk = data.risk_level || "NORMAL";
+
+                // --- STRICT SYNC LOGIC ---
+                if (tMax >= 400) { finalRisk = "CRITICAL"; } 
+                else if (tMax >= 350 && finalRisk === "NORMAL") { finalRisk = "WARNING"; }
+
+                if(data.error && tMax < 350) {
+                    updatePatchInfoDiv(`<strong>Patch ${pid}</strong><br><span style="color:#E24B4A; font-weight:600;">No AI Diagnostics available: ${data.error}</span>`);
+                    return;
+                }
+                let color = finalRisk === "CRITICAL" ? "#ef4444" : finalRisk === "WARNING" ? "#f59e0b" : "#10b981";
+                updatePatchInfoDiv(`
+                    <div style="border-bottom: 1px solid #cbd5e1; padding-bottom: 4px; margin-bottom: 4px; display:flex; justify-content:space-between;">
+                        <span><strong>Patch ${pid}</strong> (${length.toFixed(1)}m, ${angle.toFixed(1)}°)</span>
+                        <div style="text-align: right;">
+                            <span style="font-size: 9px; color: #94a3b8; text-transform: uppercase; font-weight: 700; margin-right: 4px;">Current Temp</span>
+                            <span style="font-weight:800; color:${color}; font-size: 14px;">${tMax.toFixed(0)}°C</span>
+                        </div>
+                    </div>
+                    <div style="color: ${color}; font-weight: 800; font-size: 0.75rem;">STATUS: ${finalRisk}</div>
+                    <div style="font-size: 0.65rem; margin-top: 4px; line-height: 1.2;"><b>Why:</b> ${aiWhy}</div>
+                    <div style="margin-top: 6px; padding: 4px; background: #e2e8f0; border-radius: 2px; font-weight: 700; font-size: 0.65rem; line-height: 1.2;">
+                        💡 Action: ${aiRec}
+                    </div>
+                `);
+            }).catch(e => {
+                let fallbackRisk = tMax >= 400 ? "CRITICAL" : tMax >= 350 ? "WARNING" : "NORMAL";
+                let color = fallbackRisk === "CRITICAL" ? "#ef4444" : fallbackRisk === "WARNING" ? "#f59e0b" : "#10b981";
+                updatePatchInfoDiv(`
+                    <div style="border-bottom: 1px solid #cbd5e1; padding-bottom: 4px; margin-bottom: 4px; display:flex; justify-content:space-between;">
+                        <span><strong>Patch ${pid}</strong> (${length.toFixed(1)}m, ${angle.toFixed(1)}°)</span>
+                        <div style="text-align: right;">
+                            <span style="font-size: 9px; color: #94a3b8; text-transform: uppercase; font-weight: 700; margin-right: 4px;">Current Temp</span>
+                            <span style="font-weight:800; color:${color}; font-size: 14px;">${tMax.toFixed(0)}°C</span>
+                        </div>
+                    </div>
+                    <div style="color: ${color}; font-weight: 800; font-size: 0.75rem;">STATUS: ${fallbackRisk}</div>
+                    <div style="font-size: 0.65rem; margin-top: 4px; line-height: 1.2; color:#64748b;"><b>Note:</b> Local threshold applied. Backend AI offline.</div>
+                `);
+            });
+
+        state.trend.resolution = "day";
+        syncResolutionTabsUI();
+
+        const endDt = new Date();
+        let startDt = new Date();
+
+        if (startDateStr && startDateStr !== 'undefined' && startDateStr.trim() !== '') {
+            const parsedDate = new Date(startDateStr);
+            if (!isNaN(parsedDate.getTime())) {
+                startDt = parsedDate;
+            } else {
+                startDt.setDate(endDt.getDate() - 90);
+            }
+        } else {
+            startDt.setDate(endDt.getDate() - 90);
+        }
+
+        const pad = (n) => String(n).padStart(2, '0');
+        const fmt = (d) => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+        
+        const startStr = fmt(startDt);
+        const endStr = fmt(endDt);
+
+        if (getEl("inp-date-start")) getEl("inp-date-start").value = startStr;
+        if (getEl("inp-date-end")) getEl("inp-date-end").value = endStr;
+        if (getEl("inp-date-start-left")) getEl("inp-date-start-left").value = startStr;
+        if (getEl("inp-date-end-left")) getEl("inp-date-end-left").value = endStr;
+
+        window.addOrUpdateHighlight(); 
+        setTimeout(() => { fetchTrendline(); }, 50); 
+    };
+
+    const btnAcc = getEl("btn-risk-accretion");
+    const btnIns = getEl("btn-risk-insulation");
+    if (btnAcc && btnIns) {
+        btnAcc.onclick = () => {
+            currentRiskMode = "accretion";
+            btnAcc.classList.add("active");
+            btnIns.classList.remove("active");
+            renderRiskGrid();
+        };
+        btnIns.onclick = () => {
+            currentRiskMode = "insulation";
+            btnIns.classList.add("active");
+            btnAcc.classList.remove("active");
+            renderRiskGrid();
+        };
+    }
+
+    fetchCriticalPatches();
+
+    async function fetchLatest() {
+      if (state.destroyed) return;
+
+      try {
+        const res = await fetch(API_LATEST);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+
+        if (data && data.timestamp && Array.isArray(data.patches) && data.patches.length) {
+          state.latestPayload = data;
+          state.online = true;
+          updateTimestampBadge(data.timestamp, true);
+          if(getEl("lbl-timestamp-clean")) getEl("lbl-timestamp-clean").innerText = data.timestamp.split(" ")[1] || "";
+          updateKpis(data.kpis);
+          renderAll(data, RADIUS, DEFAULT_HOME_EYE);
+          renderAnomalies(data.anomalies);
+          
+          // Fix for the smart prompt race condition:
+          // Re-run the placeholder logic now that we have the official latest date!
+          if (!state.trend.hasData && typeof window.updateTrendlineSeries === 'function') {
+              window.updateTrendlineSeries();
+          }
+        }
+      } catch (e) {
+        state.online = false;
+        const lastTs = state.latestPayload && state.latestPayload.timestamp ? state.latestPayload.timestamp : null;
+        updateTimestampBadge(lastTs, false);
+      }
+    }
+
+    function updateTimestampBadge(lastTs, online) {
+      const lbl = getEl("lbl-timestamp");
+      if (!lbl) return;
+
+      if (online) {
+        lbl.innerText = lastTs || "Awaiting Data..."; 
+        lbl.style.color = ""; // Clears inline styles so it uses the .top-right CSS
+        return;
+      }
+
+      lbl.innerText = lastTs ? `OFFLINE (${lastTs})` : "OFFLINE";
+      lbl.style.color = "#E24B4A";
+    }
+
+    function updateKpis(k) {
+      // Process Industrial Health KPIs across the kiln
+      if (!state.latestPayload || !state.latestPayload.patches) return;
+      
+      const patches = state.latestPayload.patches;
+      let criticalCount = 0;
+      let warningCount = 0;
+      let maxTemp = 0;
+      let riskZoneLen = "--";
+
+      patches.forEach(p => {
+          const tMax = parseFloat(p[2] || 0);
+          if (tMax >= 400) criticalCount++;
+          else if (tMax >= 325) warningCount++;
+          
+          if (tMax > maxTemp) {
+              maxTemp = tMax;
+              const pid = parseInt(p[0]);
+              const l_m = (pid % 1200) * (70.0 / 1200);
+              riskZoneLen = `${l_m.toFixed(1)}m`;
+          }
+      });
+
+      // Strict synchronization with Alert Bar logic (1 region per ~5 severe patches)
+      const totalHotspots = criticalCount + warningCount;
+      const hotspotRegions = totalHotspots > 0 ? Math.max(1, Math.ceil(totalHotspots / 5)) : 0; 
+
+      // NEW: Plant Health Index Calculation (Penalty based)
+      const baseScore = 100;
+      const tempPenalty = maxTemp >= 400 ? 25 : (maxTemp >= 350 ? 15 : (maxTemp >= 325 ? 5 : 0));
+      const patchPenalty = (criticalCount * 1.5) + (warningCount * 0.5);
+      let healthIndex = Math.max(0, Math.round((baseScore - tempPenalty - patchPenalty) * 10) / 10);
+
+      // Dynamic colors based on Health Index
+      let hiColor = healthIndex >= 85 ? "#10b981" : healthIndex >= 65 ? "#f59e0b" : "#ef4444";
+      let hiText = healthIndex >= 85 ? "Optimal" : healthIndex >= 65 ? "Degraded" : "Critical";
+
+      let hiEl = document.getElementById("val-healthy-pct");
+      if (hiEl) { hiEl.innerText = healthIndex.toFixed(1); hiEl.style.color = hiColor; }
+      
+      let hiTrend = document.getElementById("val-healthy-trend");
+      if (hiTrend) { hiTrend.innerText = hiText; hiTrend.style.color = hiColor; }
+
+      // Format Risk Zone with semantic name
+      let zoneName = "Feed";
+      let numLen = parseFloat(riskZoneLen);
+      if (!isNaN(numLen)) {
+          if (numLen > 23.3 && numLen <= 46.6) zoneName = "Mid";
+          else if (numLen > 46.6) zoneName = "Burning";
+          riskZoneLen = `${numLen.toFixed(1)}m ${zoneName}`;
+      }
+
+      setText("val-crit-patches", totalHotspots); 
+      setText("val-hs-regions", hotspotRegions);
+      setText("val-risk-zone", riskZoneLen);
+      
+      // Update Global Kiln Status Badge
+      const statusBadge = document.getElementById("kiln-global-status");
+      if (statusBadge) {
+          statusBadge.className = "status-badge";
+          if (maxTemp >= 400 || criticalCount > 5) {
+              statusBadge.classList.add("status-critical");
+              statusBadge.innerText = "🔴 CRITICAL";
+          } else if (maxTemp >= 350 || criticalCount > 0) {
+              statusBadge.classList.add("status-high");
+              statusBadge.innerText = "🟠 HIGH RISK";
+          } else if (maxTemp >= 325 || warningCount > 0) {
+              statusBadge.classList.add("status-warning");
+              statusBadge.innerText = "🟡 WARNING";
+          } else {
+              statusBadge.classList.add("status-healthy");
+              statusBadge.innerText = "🟢 HEALTHY";
+          }
+      }
+    }
+
+    // Keep global health KPIs locked; individual patch specifics are handled in AI Diagnostics panel
+    function updateLiveKPIsForPatch(pid) { }
+    function updateLiveKPIsForZone(startL, endL) { }
+    
+
+    function getKilnMetric() {
+      const btn = document.querySelector("#kiln-metric-controls .active");
+      return btn ? btn.getAttribute("data-kmetric") : "max";
+    }
+    
+    function getTrendMetric() {
+      return getKilnMetric();
+    }
+
+    function setMainMetric(metric) {
+      if (!metric) return;
+      const kilnControls = getEl("kiln-metric-controls");
+      if (kilnControls) {
+        kilnControls.querySelectorAll("button[data-kmetric]").forEach(b => b.classList.remove("active"));
+        const target = kilnControls.querySelector(`button[data-kmetric="${metric}"]`);
+        if (target) target.classList.add("active");
+      }
+      if (typeof window.forceDataRender === "function") window.forceDataRender();
+    }
+
+    function syncTrendMetricMirror() {
+      const metric = getTrendMetric();
+      const wrap = getEl("trend-metric-mirror");
+      if (!wrap) return;
+      const btns = wrap.querySelectorAll("button[data-metric]");
+      btns.forEach(b => {
+        if (!b) return;
+        const m = b.getAttribute("data-metric");
+        if (m === metric) b.classList.add("active");
+        else b.classList.remove("active");
+      });
+    }
+
+    function bindTrendHeaderTools() {
+      const mirror = getEl("trend-metric-mirror");
+      if (mirror) {
+        mirror.addEventListener("click", (e) => {
+          const btn = e.target && e.target.closest && e.target.closest("button[data-metric]");
+          if (!btn) return;
+          const m = btn.getAttribute("data-metric");
+          if (!m) return;
+          setMainMetric(m);
+        });
+      }
+
+      const tabs = getEl("trend-res-tabs");
+      if (tabs) {
+        tabs.addEventListener("click", (e) => {
+          const btn = e.target && e.target.closest && e.target.closest("button[data-res]");
+          if (!btn) return;
+          const r = btn.getAttribute("data-res");
+          if (!r) return;
+          state.trend.resolution = r;
+          syncResolutionTabsUI();
+          renderTrendline();
+        });
+      }
+
+      const kilnControls = getEl("kiln-metric-controls");
+      if (kilnControls) {
+        kilnControls.addEventListener("click", (e) => {
+          const btn = e.target && e.target.closest && e.target.closest("button[data-kmetric]");
+          if (!btn) return;
+
+          kilnControls.querySelectorAll("button[data-kmetric]").forEach(b => b.classList.remove("active"));
+          btn.classList.add("active");
+
+          if (typeof window.forceDataRender === "function") window.forceDataRender();
+        });
+      }
+    }
+
+    function syncResolutionTabsUI() {
+      const tabs = getEl("trend-res-tabs");
+      if (!tabs) return;
+      const btns = tabs.querySelectorAll("button[data-res]");
+      btns.forEach(b => {
+        const r = b.getAttribute("data-res");
+        if (r === state.trend.resolution) b.classList.add("active");
+        else b.classList.remove("active");
+      });
+      
+      // NEW: Update AI Button Text Dynamically
+      const aiBtnLeft = getEl("btn-run-prediction-left");
+      const aiBtnMain = getEl("btn-run-prediction");
+      const predText = state.trend.resolution === "day" ? "✨ AI predict (10 Days)" : "✨ AI predict (24h)";
+      if (aiBtnLeft) aiBtnLeft.innerText = predText;
+      if (aiBtnMain) aiBtnMain.innerText = predText;
+    }
+
+    function showTrendPlaceholder(text) {
+      const ph = getEl("trendline-placeholder");
+      if (ph) {
+          ph.innerHTML = `<div style="display:flex; flex-direction:column; align-items:center; gap:8px;">
+                            <div class="spinner" style="width:24px;height:24px;border:3px solid #cbd5e1;border-top:3px solid #2563eb;border-radius:50%;animation:spin 1s linear infinite;"></div>
+                            <div style="font-weight:700; color:#475569;">${text || 'Loading...'}</div>
+                          </div>`;
+          ph.style.display = "flex";
+          ph.style.background = "rgba(248, 250, 252, 0.9)"; 
+          ph.style.position = "absolute";
+          ph.style.top = "0"; ph.style.left = "0"; ph.style.right = "0"; ph.style.bottom = "0";
+          ph.style.zIndex = "10";
+          ph.style.justifyContent = "center";
+      }
+    }
+
+    function showTrendPlot() {
+      const ph = getEl("trendline-placeholder");
+      if (ph) ph.style.display = "none";
+    }
+
+    function parseLocalTimestamp(tsStr) {
+      const s = (tsStr || "").trim();
+      if (!s) return null;
+
+      const norm = s.replace("T", " ");
+      const parts = norm.split(" ");
+      const datePart = parts[0] || "";
+      const timePart = parts[1] || "00:00:00";
+
+      const d = datePart.split("-").map(n => parseInt(n, 10));
+      const t = timePart.split(":").map(n => parseInt(n, 10));
+
+      const Y = d[0] || 1970;
+      const M = (d[1] || 1) - 1;
+      const D = d[2] || 1;
+      const hh = t[0] || 0;
+      const mm = t[1] || 0;
+      const ss = t[2] || 0;
+
+      return new Date(Y, M, D, hh, mm, ss);
+    }
+    
+    async function runAIPrediction(sequence) {
+        const response = await fetch(API_AI_PREDICT, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                sequence: sequence
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error("Prediction API failed");
+        }
+
+        return await response.json();
+    }
+
+    async function fetchTrendline() {
+      // System now strictly reads from the unified left Trend Controls
+      const startEl = getEl("inp-date-start-left") || getEl("inp-date-start");
+      const endEl = getEl("inp-date-end-left") || getEl("inp-date-end");
+      const s = startEl ? startEl.value : "";
+      const e = endEl ? endEl.value : "";
+      const metric = getTrendMetric();
+      const res_type = state.trend.resolution; 
+
+      if (!s || !e) return;
+      showTrendPlaceholder(`Analyzing ${res_type} data...`);
+
+      try {
+        const res = await fetch("/apps/dri-kiln-thermal-analytics/api/trendline", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ 
+            start: s + " 00:00:00", 
+            end: e + " 23:59:59", 
+            pid: state.selectedPID,
+            start_len: state.zoneStart,  
+            end_len: state.zoneEnd,
+            metric: metric,
+            resolution: res_type 
+          })
+        });
+        
+        if (!res.ok) throw new Error("HTTP " + res.status);
+
+        const payload = await res.json();
+        
+        state.trend.accretionData = { stats: payload.daily_avg, clusters: payload.clusters || [] };
+        state.trend.rawFrames = payload.data;
+        state.trend.hasData = true;
+
+        if (typeof window.updateTrendlineSeries === "function") {
+            window.updateTrendlineSeries();
+        }
+      } catch (err) {
+        const ph = getEl("trendline-placeholder");
+        if (ph) {
+            ph.innerHTML = `<div style="font-weight:700; color:#E24B4A; text-align:center;">Server Error (502).<br>Failed to fetch history data.</div>`;
+            ph.style.display = "flex";
+        }
+        if (typeof Plotly !== "undefined") Plotly.purge("trendline-plot");
+      }
+    }
+
+    window.updateTrendlineSeries = function() {
+      const phDiv = document.getElementById("trendline-placeholder");
+      
+      if (!state.trend.rawFrames || !state.trend.rawFrames.length) {
+          state.trend.hasData = false;
+          if (phDiv) {
+              let phHTML = '<div style="font-weight:700; color:#475569;">No Data Available / Kiln Offline in this date range.</div>';
+              
+              // 1. Find the last known date (from memory OR from the top-right UI label)
+              let lastTsStr = null;
+              if (state.latestPayload && state.latestPayload.timestamp) {
+                  lastTsStr = state.latestPayload.timestamp;
+              } else {
+                  const topLbl = document.getElementById("lbl-timestamp");
+                  if (topLbl && topLbl.innerText.match(/\d{4}-\d{2}-\d{2}/)) {
+                      lastTsStr = topLbl.innerText.match(/\d{4}-\d{2}-\d{2}/)[0];
+                  }
+              }
+
+              if (lastTsStr) {
+                  const lastDateStrOnly = lastTsStr.split(" ")[0]; 
+                  const lastDateObj = new Date(lastDateStrOnly);
+                  
+                  const prevDateObj = new Date(lastDateObj);
+                  prevDateObj.setDate(prevDateObj.getDate() - 1);
+                  
+                  const pad = (n) => String(n).padStart(2, '0');
+                  const endStr = lastDateObj.getFullYear() + '-' + pad(lastDateObj.getMonth()+1) + '-' + pad(lastDateObj.getDate());
+                  const startStr = prevDateObj.getFullYear() + '-' + pad(prevDateObj.getMonth()+1) + '-' + pad(prevDateObj.getDate());
+                  
+                  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+                  const displayEnd = lastDateObj.getDate() + ' ' + months[lastDateObj.getMonth()];
+                  const displayStart = prevDateObj.getDate() + ' ' + months[prevDateObj.getMonth()];
+                  
+                  const currentStartEl = document.getElementById("inp-date-start-left") || document.getElementById("inp-date-start");
+                  const currentStartStr = currentStartEl ? currentStartEl.value : "";
+                  
+                  
+                  // If requested start date is AFTER the latest known data, show smart prompt
+                  if (currentStartStr && currentStartStr > endStr) {
+                      phHTML = '<div style="display:flex; flex-direction:column; align-items:center; gap:8px; text-align:center;">' +
+                               '<div style="font-weight:700; color:#E24B4A; font-size: 14px;">Kiln is offline from ' + displayEnd + '</div>' +
+                               '<div style="color:#475569; font-size: 12px; font-weight:500;">Would you like to see the older data from ' + displayStart + ' to ' + displayEnd + '?</div>' +
+                               '<button class="scada-btn" onclick="' +
+                               'var sl=document.getElementById(\'inp-date-start-left\'), el=document.getElementById(\'inp-date-end-left\'),' +
+                               'sm=document.getElementById(\'inp-date-start\'), em=document.getElementById(\'inp-date-end\'); ' +
+                               'if(sl) sl.value=\'' + startStr + '\'; if(el) el.value=\'' + endStr + '\'; ' +
+                               'if(sm) sm.value=\'' + startStr + '\'; if(em) em.value=\'' + endStr + '\'; ' +
+                               'if(sl) sl.dispatchEvent(new Event(\'change\')); else if(sm) sm.dispatchEvent(new Event(\'change\'));' +
+                               '" style="margin-top:8px; padding: 8px 16px; width:auto; border-color:#94a3b8; cursor:pointer; background-color:#f8fafc;">' +
+                               'View ' + displayStart + ' - ' + displayEnd + ' Trendline' +
+                               '</button></div>';
+                  }
+              }
+              
+              phDiv.innerHTML = phHTML;
+              phDiv.style.display = "flex";
+          }
+          if (typeof Plotly !== 'undefined') Plotly.purge("trendline-plot");
+          return;
+      }
+      
+      const frames = state.trend.rawFrames;
+      const series = [];
+
+      for (let i = 0; i < frames.length; i++) {
+        const fr = frames[i];
+        const dt = parseLocalTimestamp(fr.timestamp);
+        if (!dt) continue;
+
+        // FIX 1: Find the actual selected patch, otherwise fallback to global
+        let p = null;
+        if (state.selectedPID !== null) {
+            p = fr.patches.find(patch => parseInt(patch[0]) === state.selectedPID);
+        } else {
+            p = fr.patches[0]; 
+        }
+        
+        if (p) {
+            series.push({
+                t: dt,
+                avg: Number(p[1] || 0),
+                max: Number(p[2] || 0),
+                std: Number(p[3] || 0),
+                grad: Number(p[4] || 0)
+            });
+        }
+      }
+
+      series.sort((a,b) => a.t - b.t);
+      state.trend.minuteSeries = series;
+      state.trend.hasData = series.length > 0;
+
+      if (!state.trend.hasData) {
+        if (phDiv) {
+            phDiv.innerHTML = `<div style="font-weight:700; color:#475569;">No Data Available / Kiln Offline in this date range.</div>`;
+            phDiv.style.display = "flex";
+        }
+        if (typeof Plotly !== 'undefined') Plotly.purge("trendline-plot");
+      } else {
+        if (phDiv) phDiv.style.display = "none";
+        
+        // Removed the historical KPI overwrite logic. 
+        // Now "Thermal KPIs" will strictly stay locked to the LIVE values of the selected patch/zone.
+        
+        renderTrendline();
+      }
+    };
+
+    function bucketSeries(points, resolution, metricKey) {
+      if (resolution === "minute") {
+        return points.map(p => ({ x: p.t, y: p[metricKey] }));
+      }
+
+      const buckets = new Map();
+
+      for (let i = 0; i < points.length; i++) {
+        const p = points[i];
+        const d = p.t;
+        if (!d) continue;
+
+        let keyDate;
+        if (resolution === "hour") {
+          keyDate = new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), 0, 0);
+        } else {
+          keyDate = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0);
+        }
+
+        const key = keyDate.getTime();
+        const prev = buckets.get(key);
+        const v = Number(p[metricKey] || 0);
+
+        if (!prev) {
+          buckets.set(key, { dt: keyDate, sum: v, n: 1 });
+        } else {
+          prev.sum += v;
+          prev.n += 1;
+        }
+      }
+
+      return Array.from(buckets.values())
+        .map(b => ({ x: b.dt, y: b.n ? (b.sum / b.n) : 0 }))
+        .sort((a,b) => a.x - b.x);
+    }
+
+    function renderTrendline() {
+      if (!hasPlotly() || !state.trend.hasData) return;
+      
+      const metric = getTrendMetric(); 
+      const res = state.trend.resolution; 
+      const metricLabel = metric.toUpperCase();
+
+      showTrendPlot();
+      
+      const bucketed = bucketSeries(state.trend.minuteSeries, res, metric);
+      const xs = bucketed.map(p => p.x);
+      const ys = bucketed.map(p => p.y);
+
+      const slope_ys = [0];
+      for(let i = 1; i < ys.length; i++) slope_ys.push(ys[i] - ys[i-1]);
+
+      const trace1 = { 
+          x: xs, y: ys, 
+          name: "Max temp", mode: 'lines+markers', 
+          line: { color: "#E24B4A", width: 2, shape: 'spline' }, marker: {size: 5},
+          hovertemplate: '<b>%{x|%b %d, %H:%M}</b><br><br><span style="color:#E24B4A">■</span> Max temp: %{y:.0f}°C<extra></extra>' 
+      };
+      const trace2 = { 
+          x: xs, y: slope_ys, 
+          name: "Daily change", mode: 'lines+markers', 
+          line: { color: "#BA7517", width: 1.5, dash: 'dot', shape: 'spline' }, marker: {size: 4}, yaxis: "y2",
+          hovertemplate: '<span style="color:#BA7517">■</span> Daily change: %{y:.0f}°C<extra></extra>'
+      };
+
+      let xFormat = "%d %b";    
+      let tickInterval = undefined;
+      
+      if (res === "hour") {
+          xFormat = "%H:%M"; // Strict 24-hour format logic applied here
+          tickInterval = undefined; // Let Plotly auto-space the ticks so they don't overlap
+      } else if (res === "minute") {
+          xFormat = "%H:%M";
+          tickInterval = 10 * 60 * 1000;
+      }
+
+      // 5-point increment logic applied here
+      let yAxisConfig = { title: metricLabel + " (°C)" };
+      if (metric === "max") {
+          yAxisConfig.tickmode = 'linear';
+          yAxisConfig.dtick = 50; // Forces steps like 300, 350
+      } else {
+          yAxisConfig.nticks = 6;
+      }
+
+      const shapes = [];
+      const annotations = [];
+      
+
+      // Detect time gaps to mark as "Kiln Off"
+      // Adjusted threshold to catch missed daily frames perfectly
+      const gapThreshold = (res === "day") ? 25 : 4; 
+      
+      for (let i = 1; i < xs.length; i++) {
+          const t1 = xs[i-1].getTime();
+          const t2 = xs[i].getTime();
+          const diffHours = (t2 - t1) / (1000 * 60 * 60);
+          
+          if (diffHours > gapThreshold) { 
+              shapes.push({
+                  type: 'rect', xref: 'x', yref: 'paper',
+                  x0: xs[i-1], x1: xs[i], y0: 0, y1: 1,
+                  fillcolor: 'rgba(148, 163, 184, 0.15)', // Light gray overlay
+                  line: {width: 0},
+                  layer: 'below' // Forces it behind the trendlines
+              });
+              annotations.push({
+                  x: new Date((t1 + t2) / 2), y: 0.5, yref: 'paper',
+                  text: 'KILN OFFLINE', showarrow: false,
+                  font: {color: '#94a3b8', size: 10, weight: 600}, 
+                  textangle: -90
+              });
+          }
+      }
+
+      // Add industrial standard threshold lines
+      if (metric === "max" || metric === "avg") {
+          const addLine = (y, color, text) => {
+              shapes.push({
+                  type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: y, y1: y,
+                  line: { color: color, width: 1, dash: 'dash' }
+              });
+              annotations.push({
+                  xref: 'paper', x: 1, yref: 'y', y: y, xanchor: 'right', yanchor: 'bottom',
+                  text: text, font: { size: 9, color: color }, showarrow: false, yshift: 2
+              });
+          };
+          addLine(225, '#10b981', 'Normal Lower (225°C)');
+          addLine(275, '#10b981', 'Normal Upper (275°C)');
+          addLine(325, '#f59e0b', 'Warning (325°C)');
+          addLine(400, '#ef4444', 'Critical (400°C)');
+      }
+
+      const layout = {
+          margin: { l: 40, r: 40, t: 10, b: 30 }, 
+          showlegend: false,
+          hovermode: 'x unified',
+          paper_bgcolor: "transparent", plot_bgcolor: "transparent",
+          shapes: shapes,
+          annotations: annotations,
+          xaxis: { 
+              type: "date", 
+              automargin: true, 
+              tickangle: 0, 
+              tickformat: xFormat,
+              dtick: tickInterval
+          },
+          yaxis: yAxisConfig, 
+          yaxis2: { 
+              title: "Change (Slope)", 
+              overlaying: "y", side: "right", showgrid: false 
+          }
+      };
+      Plotly.react("trendline-plot", [trace1, trace2], layout);
+      
+      // Update Left-Panel AI Button Visibility
+      const btnPredictLeft = document.getElementById("btn-run-prediction-left");
+      if (btnPredictLeft) {
+          if (state.selectedPID !== null) {
+              btnPredictLeft.style.display = "block";
+              // AI text (24h vs 10 Days) is handled dynamically by syncResolutionTabsUI
+          } else {
+              btnPredictLeft.style.display = "none";
+          }
+      }
+    }
+
+    // --- AI PREDICTION LOGIC ---
+    // --- AI PREDICTION LOGIC ---
+    function runAIPrediction(historyData, lastDateObj) {
+        if (!state.selectedPID) return;
+        
+        if (!historyData || historyData.length < 5) {
+            alert("⚠️ Not enough historical data. Please ensure the blue line is visible before running the AI Prediction.");
+            return;
+        }
+        
+        const btnPredict = document.getElementById("btn-run-prediction");
+        const originalText = btnPredict.innerText;
+        btnPredict.innerText = "⏳ COMPUTING...";
+
+        let is_daily = state.trend.resolution === "day";
+        let forecast_steps = is_daily ? 10 : 24; 
+
+        // Call the Flask proxy to avoid CORS and localhost issues in production
+        fetch(`/apps/dri-kiln-thermal-analytics/api/predict-trend/${state.selectedPID || 0}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ history: historyData, steps: forecast_steps })
+        })
+        .then(res => res.json())
+        .then(data => {
+            btnPredict.innerText = originalText;
+            if (data.error) return alert(data.error);
+            
+            let future_xs = [];
+            let start_date = new Date(lastDateObj);
+            
+            let is_daily = state.trend.resolution === "day";
+            let time_step_ms = is_daily ? (24 * 60 * 60 * 1000) : (60 * 60 * 1000); 
+
+            let current_ms = start_date.getTime();
+            
+            let forecast_steps = is_daily ? 10 : 24; 
+            
+            for (let i = 1; i <= forecast_steps; i++) {
+                future_xs.push(new Date(current_ms + (i * time_step_ms)));
+            }
+            const trace3 = {
+                x: future_xs, y: data.predictions, name: "AI Forecast",
+                mode: 'lines+markers', line: { color: "#a855f7", width: 2, shape: 'spline' }, marker: { size: 5, color: "#a855f7" },
+                hovertemplate: '<b>%{x|%b %d, %H:%M}</b><br><br><span style="color:#a855f7">■</span> AI Forecast: %{y:.0f}°C<extra></extra>'
+            };
+            
+            const layout = document.getElementById("trendline-plot").layout;
+            Plotly.react("trendline-plot", [trace3], layout);
+            
+            btnPredict.innerText = "Back to History";
+            btnPredict.onclick = () => {
+                renderTrendline(); 
+            };
+        })
+        .catch(err => {
+            console.error("Local Server Error:", err);
+            btnPredict.innerText = originalText;
+            alert("Could not connect to localhost:8000. Is your Windows FastAPI server running?");
+        });
+    }
+
+    function metricRangeKey(selMetric) {
+      return (selMetric === "avg") ? "mean" : selMetric;
+    }
+
+    function buildYZ(angleDegList, thetaOffsetRad, radius) {
+      const y = [];
+      const z = [];
+      const d2r = Math.PI / 180;
+
+      for (let i = 0; i < angleDegList.length; i++) {
+        const theta = (angleDegList[i] * d2r) + thetaOffsetRad;
+        const cy = radius * Math.cos(theta);
+        const cz = radius * Math.sin(theta);
+
+        const rowY = new Array(state.mesh.lengths.length).fill(cy);
+        const rowZ = new Array(state.mesh.lengths.length).fill(cz);
+
+        y.push(rowY);
+        z.push(rowZ);
+      }
+
+      const thetaEnd = (2 * Math.PI) + thetaOffsetRad;
+      const cyEnd = radius * Math.cos(thetaEnd);
+      const czEnd = radius * Math.sin(thetaEnd);
+      y.push(new Array(state.mesh.lengths.length).fill(cyEnd));
+      z.push(new Array(state.mesh.lengths.length).fill(czEnd));
+
+      return { y, z };
+    }
+
+    function ensureSelectors(lengths, angles) {
+      const listLength = getEl("list-length");
+      const listAngle = getEl("list-angle");
+      if (!listLength || !listAngle) return;
+
+      const buildOpt = (v) => {
+        const n = Number(v);
+        if (!Number.isFinite(n)) return "";
+        return `<option value="${n.toFixed(1)}"></option>`;
+      };
+
+      if (listLength.childNodes.length === 0) {
+         listLength.innerHTML = (Array.isArray(lengths) ? lengths.map(buildOpt).join("") : "");
+      }
+      if (listAngle.childNodes.length === 0) {
+         listAngle.innerHTML = (Array.isArray(angles) ? angles.map(buildOpt).join("") : "");
+      }
+    }
+
+    function renderAll(payload, radius, defaultHomeEye) {
+      if (!hasPlotly()) return;
+
+      const patches = payload && Array.isArray(payload.patches) ? payload.patches : null;
+      if (!patches || !patches.length) return;
+
+      const meta = payload.meta || {};
+
+      const lengths = Array.isArray(payload.lengths) && payload.lengths.length ? payload.lengths.slice()
+        : [...new Set(patches.map(p => p[6]))].sort((a,b)=>a-b);
+
+      const angles = Array.isArray(payload.angles) && payload.angles.length ? payload.angles.slice()
+        : [...new Set(patches.map(p => p[7]))].sort((a,b)=>a-b);
+
+      lengths.sort((a,b)=>a-b);
+      angles.sort((a,b)=>a-b);
+
+      ensureSelectors(lengths, angles);
+
+      const gridCols = (typeof meta.grid_cols === "number") ? meta.grid_cols : 0;
+      const gridRows = (typeof meta.grid_rows === "number") ? meta.grid_rows : 0;
+      const expected = (gridCols > 0 && gridRows > 0) ? (gridCols * gridRows) : 0;
+
+      let byId = null;
+      if (expected > 0 && expected < 200000) {
+        byId = new Array(expected);
+        for (let i = 0; i < patches.length; i++) {
+          const p = patches[i];
+          const pid = Number(p[0]);
+          if (Number.isFinite(pid) && pid >= 0 && pid < expected) byId[pid] = p;
+        }
+      }
+
+      const x = [];
+      for (let i = 0; i < angles.length; i++) x.push(lengths.slice());
+      x.push(lengths.slice());
+
+      const selMetric = getKilnMetric();
+
+      const colors = [];
+      const customdata = [];
+
+      let fallbackMin = Infinity, fallbackMax = -Infinity;
+
+      for (let i = 0; i < angles.length; i++) {
+        const A = angles[i];
+        const rowC = [];
+        const rowCD = [];
+
+        for (let j = 0; j < lengths.length; j++) {
+          const L = lengths[j];
+
+          let pMatch = null;
+          if (byId && gridCols > 0 && i < gridRows && j < gridCols) {
+            pMatch = byId[i * gridCols + j] || null;
+          } else {
+            pMatch = patches.find(p =>
+              Math.abs(p[6] - L) < 0.001 &&
+              Math.abs(p[7] - A) < 0.001
+            ) || null;
+          }
+
+          const tMean = pMatch ? Number(pMatch[1] || 0) : 0;
+          const tMax  = pMatch ? Number(pMatch[2] || 0) : 0;
+          const tStd  = pMatch ? Number(pMatch[3] || 0) : 0;
+          const tGrad = pMatch ? Number(pMatch[4] || 0) : 0;
+
+          let mapVal = 0;
+          if (selMetric === "max") mapVal = tMax;
+          else if (selMetric === "avg") mapVal = tMean;
+          else if (selMetric === "std") mapVal = tStd;
+          else if (selMetric === "grad") mapVal = tGrad;
+
+          if (mapVal < fallbackMin) fallbackMin = mapVal;
+          if (mapVal > fallbackMax) fallbackMax = mapVal;
+
+          const pid = pMatch ? Number(pMatch[0]) : -1;
+
+          rowC.push(mapVal);
+          rowCD.push([+L, +A, +tMax, +tMean, +tStd, +tGrad, pid]);
+        }
+
+        colors.push(rowC);
+        customdata.push(rowCD);
+      }
+
+      colors.push(colors[0].slice());
+      customdata.push(customdata[0].slice());
+
+      state.mesh = { lengths, angles, radius, x, colors, customdata };
+
+      const yz = buildYZ(angles, state.thetaOffsetRad, radius);
+
+      let cmin = fallbackMin;
+      let cmax = fallbackMax;
+      
+      // 🔒 Locked Thermal Scale
+      if (selMetric === "max" || selMetric === "avg") {
+          cmin = 50;  
+          cmax = 450; 
+      } else if (selMetric === "grad") {
+          cmin = 0; cmax = 5;
+      } else if (selMetric === "std") {
+          cmin = 0; cmax = 20;
+      }
+
+      if (!(cmax > cmin)) { cmin = 0; cmax = 1; }
+
+      let activeColorscale;
+      
+      if (state.mapMode === "anomaly") {
+          let cutoffVal = 300; 
+          if (selMetric === "grad") cutoffVal = 3.0;
+          if (selMetric === "std") cutoffVal = 10.0;
+          
+          let threshold = (cutoffVal - cmin) / (cmax - cmin);
+          threshold = Math.max(0.001, Math.min(0.999, threshold)); 
+          
+          activeColorscale = [
+              [0.0, "#111111"], [threshold, "#111111"],       
+              [threshold + 0.001, "#E24B4A"], [1.0, "#E24B4A"] 
+          ];
+      } else {
+          // 🎨 Industrial Iron Palette
+          activeColorscale = [
+              [0.00, "#020024"], 
+              [0.20, "#090979"], 
+              [0.40, "#00d4ff"], 
+              [0.60, "#aaff00"], 
+              [0.75, "#ffaa00"], 
+              [0.90, "#ff0000"], 
+              [1.00, "#8a0000"]  
+          ];
+      }
+
+      const metricLabel = (selMetric === "avg") ? "MEAN" : selMetric.toUpperCase();
+
+      const trace = [
+        {
+          type: "surface",
+          lighting: { ambient: 0.9, diffuse: 0.6, roughness: 0.9 },
+          x: state.mesh.x,
+          y: yz.y,
+          z: yz.z,
+          surfacecolor: state.mesh.colors,
+          customdata: state.mesh.customdata,
+          colorscale: activeColorscale,
+          cmin: cmin,
+          cmax: cmax,
+          showscale: true,
+          hoverinfo: "none", 
+          colorbar: { title: metricLabel, thickness: 12, len: 0.8, xpad: 5, outlinewidth: 0 },
+          contours: {
+              x: { show: state.showGrid, color: "rgba(255,255,255,0.18)", width: 1 },
+              z: { show: state.showGrid, color: "rgba(255,255,255,0.18)", width: 1 }
+          }
+        },
+        {
+          type: "scatter3d",
+          mode: "markers",
+          x: [null], y: [null], z: [null],
+          marker: { size: 12, color: '#ffff00', symbol: 'circle', line: { color: '#000000', width: 2 } },
+          hoverinfo: "none",
+          showlegend: false
+        }
+      ];
+
+      const plotDiv = getEl("kiln-3d-viewport");
+      if (!plotDiv) return;
+
+      let camEye = defaultHomeEye;
+      if (state.has3D && plotDiv.layout && plotDiv.layout.scene && plotDiv.layout.scene.camera && plotDiv.layout.scene.camera.eye) {
+        camEye = plotDiv.layout.scene.camera.eye;
+      }
+
+      const layout = {
+        hovermode: "closest",
+        margin: { l: 0, r: 0, t: 0, b: 0 },
+        paper_bgcolor: "transparent",
+        autosize: true,
+        uirevision: UIREV,
+        scene: {
+          dragmode: "turntable",
+          aspectratio: { x: 4, y: 1, z: 1 },
+          camera: { eye: camEye },
+          xaxis: {
+            title: { text: "Length", font: { size: 10, color: "#475569" } },
+            range: [0, 70], tickmode: "auto", nticks: 10, ticksuffix: "m",
+            showgrid: false, zeroline: false, showline: true
+          },
+          yaxis: { showgrid: false, zeroline: false, showticklabels: false, showline: true },
+          zaxis: { showgrid: false, zeroline: false, showticklabels: false, showline: true }
+        }
+      };
+
+      Plotly.react(plotDiv, trace, layout, { displayModeBar: true, responsive: true, staticPlot: false, scrollZoom: false })
+      .then(() => {
+        state.has3D = true;
+        if (typeof plotDiv.removeAllListeners === "function") plotDiv.removeAllListeners("plotly_click");
+        if (typeof plotDiv.on === "function") {
+          plotDiv.on("plotly_click", function (evt) {
+              try {
+                  const pt = evt.points[0]; 
+                  if (pt.x === undefined || pt.y === undefined || pt.z === undefined) return;
+
+                  const L = pt.x; 
+                  let theta = Math.atan2(pt.z, pt.y) - state.thetaOffsetRad;
+                  let A = (theta * 180 / Math.PI) % 360;
+                  if (A < 0) A += 360;
+
+                  let snappedL = state.mesh.lengths.reduce((prev, curr) => Math.abs(curr - L) < Math.abs(prev - L) ? curr : prev);
+                  let snappedA = state.mesh.angles.reduce((prev, curr) => Math.abs(curr - A) < Math.abs(prev - A) ? curr : prev);
+
+                  let bestPID = -1;
+                  if(state.mesh && state.mesh.customdata) {
+                      for(let r of state.mesh.customdata) {
+                          for(let cell of r) {
+                              if(cell && Math.abs(cell[0] - snappedL) < 0.1 && Math.abs(cell[1] - snappedA) < 0.1) {
+                                  bestPID = cell[6];
+                              }
+                          }
+                      }
+                  }
+
+                  if(typeof updateLiveKPIsForPatch === 'function') updateLiveKPIsForPatch(bestPID);
+                  // Prevent the kiln from stopping its rotation when clicked
+                  state.isPlaying = true;
+                  state.lastRotTs = performance.now();
+
+                  state.selectedLength = snappedL; 
+                  state.selectedAngle = snappedA; 
+                  state.selectedPID = bestPID; 
+                  state.zoneStart = null; state.zoneEnd = null;
+
+                  if(getEl("sel-length")) getEl("sel-length").value = snappedL.toFixed(1); 
+                  if(getEl("sel-angle")) getEl("sel-angle").value = snappedA.toFixed(1);
+                  if(getEl("zone-start")) getEl("zone-start").value = ""; 
+                  if(getEl("zone-end")) getEl("zone-end").value = "";
+
+                  const titleEl = document.getElementById("trendline-title");
+                  if (titleEl) titleEl.innerText = `PATCH TREND — ${snappedL.toFixed(1)}m, ${snappedA.toFixed(1)}° · 10 DAY`;
+                  
+                  const btnReset = document.getElementById("btn-reset-trend");
+                  if (btnReset) btnReset.style.display = "inline-flex";
+
+                  updatePatchInfoDiv(`<strong>Point Selected:</strong> ${snappedL.toFixed(1)}m, ${snappedA.toFixed(1)}° <br><small>PID: ${bestPID}</small><br><br><i>Loading AI Diagnostics...</i>`);
+
+                  fetch(`/apps/dri-kiln-thermal-analytics/api/recommendation/${bestPID}`)
+                      .then(res => {
+                          if (!res.ok) throw new Error("HTTP " + res.status);
+                          return res.json();
+                      })
+                      .then(data => {
+                          if(data.error) {
+                              updatePatchInfoDiv(`<strong>Patch ${bestPID}</strong><br><span style="color:#E24B4A; font-weight:600;">No AI Diagnostics available: ${data.error}</span>`);
+                              return;
+                          }
+                          
+                          let color = data.risk_level === "CRITICAL" ? "#ef4444" : data.risk_level === "WARNING" ? "#f59e0b" : "#10b981";
+                          
+                          let html = `
+                              <div style="border-bottom: 1px solid #cbd5e1; padding-bottom: 4px; margin-bottom: 4px;">
+                                  <strong>Patch ${bestPID}</strong> (${snappedL.toFixed(1)}m, ${snappedA.toFixed(1)}°)
+                              </div>
+                              <div style="color: ${color}; font-weight: 800; font-size: 0.75rem;">STATUS: ${data.risk_level}</div>
+                              <div style="font-size: 0.65rem; margin-top: 4px; line-height: 1.2;"><b>Why:</b> ${data.xai.join(" ")}</div>
+                              <div style="margin-top: 6px; padding: 4px; background: #e2e8f0; border-radius: 2px; font-weight: 700; font-size: 0.65rem; line-height: 1.2;">
+                                  💡 Action: ${data.recommendation}
+                              </div>
+                          `;
+                          updatePatchInfoDiv(html);
+                      })
+                      .catch(e => {
+                          updatePatchInfoDiv(`<strong>Patch ${bestPID}</strong><br><span style="color:#E24B4A; font-weight:600;">Server error: Failed to load diagnostics.</span>`);
+                          console.error("Rec Error", e);
+                      });
+
+                  state.trend.resolution = "day"; syncResolutionTabsUI();
+                  const endDt = new Date();
+                  const startDt = new Date();
+                  startDt.setDate(endDt.getDate() - 10);
+                  const pad = (n) => String(n).padStart(2, '0');
+                  const fmt = (d) => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+  
+                  const startStr = fmt(startDt);
+                  const endStr = fmt(endDt);
+
+                  if (getEl("inp-date-start")) getEl("inp-date-start").value = startStr;
+                  if (getEl("inp-date-end")) getEl("inp-date-end").value = endStr;
+                  if (getEl("inp-date-start-left")) getEl("inp-date-start-left").value = startStr;
+                  if (getEl("inp-date-end-left")) getEl("inp-date-end-left").value = endStr;
+
+                  window.addOrUpdateHighlight();
+                  
+                  showTrendPlaceholder(`Fetching Patch ${state.selectedPID} data...`);
+                  setTimeout(() => { fetchTrendline(); }, 50); 
+              } catch(e) { console.error("Click Error: ", e); }
+          });
+        }
+      });
+    }
+
+    function updateRotationGeometry(radius) {
+      if (!state.has3D || !state.mesh || !hasPlotly()) return;
+
+      const plotDiv = getEl("kiln-3d-viewport");
+      if (!plotDiv) return;
+
+      const yz = buildYZ(state.mesh.angles, state.thetaOffsetRad, radius);
+      
+      let req = { y: [yz.y], z: [yz.z] };
+      let traces = [0];
+
+      if (state.selectedLength !== null && state.selectedAngle !== null && plotDiv.data && plotDiv.data.length > 1) {
+          const d2r = Math.PI / 180;
+          const theta = (state.selectedAngle * d2r) + state.thetaOffsetRad;
+          const hy = radius * Math.cos(theta);
+          const hz = radius * Math.sin(theta);
+          
+          req.y.push([hy]);
+          req.z.push([hz]);
+          req.x = [undefined, [state.selectedLength]];
+          traces.push(1);
+      } else if (plotDiv.data && plotDiv.data.length > 1) {
+          req.y.push([null]);
+          req.z.push([null]);
+          req.x = [undefined, [null]];
+          traces.push(1);
+      }
+
+      Plotly.restyle(plotDiv, req, traces).catch(() => {});
+    }
+
+    function rotationLoop(ts) {
+      if (state.destroyed) return;
+
+      const speedEl = getEl("inp-speed");
+      const speed = speedEl ? parseInt(speedEl.value, 10) : 3;
+      const intervalMs = Math.max(40, 180 - (speed * 12));
+
+      if (state.isPlaying && state.has3D && state.mesh && ts - state.lastRotTs >= intervalMs) {
+        state.thetaOffsetRad += (0.012 + (speed * 0.004));
+        state.lastRotTs = ts;
+        try { updateRotationGeometry(state.mesh.radius); } catch(e){}
+      }
+
+      state.rafId = requestAnimationFrame(rotationLoop);
+    }
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init, { once: true });
+  } else {
+    init();
+  }
+})();
+</script>
+</section>
