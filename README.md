@@ -34,11 +34,6 @@ The application is split into two specialized components that communicate over a
 ---
 
 ---
-
-### 💡 Markdown mein Screenshot Kaise Add Karein?
-Apne dashboard ka screenshot upload karne ke liye aapko bas upar diye gaye README code ke **Key Features** section ke theek niche ye line insert karni hogi:
-
-```markdown
 ## Dashboard Interface Preview
 
 ![DRI Kiln Dashboard]
